@@ -1,4 +1,8 @@
 from __future__ import annotations
+
+import json
+import os
+import urllib.request
 from abc import abstractmethod
 from typing import Dict, List, Union
 
@@ -8,118 +12,9 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import tifffile
 
-debug = False
+from mapzebview import regions
 
-regions_structure = {
-    'prosencephalon (forebrain)': {
-        'telencephalon': {
-            'olfactory bulb': 2.0,
-            'pallium (dorsal telencephalon)': 2.0,
-            'subpallium (ventral telencephalon)': 2.0
-        },
-        'hypothalamus': {
-            'rostral hypothalamus': 2.0,
-            'intermediate hypothalamus (entire)': {
-                'intermediate hypothalamus (remaining)': 2.0,
-                'diffuse nucleus of the inferior lobe': 2.0
-            },
-            'caudal hypothalamus': 2.0,
-            'pituitary (hypophysis)': 2.0
-        },
-        'preoptic area': {
-            'retinal arborization field 1': 2.0,
-            'retinal arborization field 2': 2.0
-        },
-        'posterior tuberculum, anterior part (basal prosomere 3, ventral posterior tuberculum)': 2.0,
-        'retina': 2.0,
-        'eminentia thalami': {
-            'ventral entopeduncular nucleus': 2.0,
-            'eminentia thalami (remaining)': 2.0
-        },
-        'prethalamus (alar prosomere 3, ventral thalamus)': {
-            'retinal arborization field 3': 2.0
-        },
-        'thalamus (alar prosomere 2, dorsal thalamus)': {
-            'pineal complex (epiphysis)': 2.0,
-            'habenula': {
-                'dorsal habenula': 2.0,
-                'ventral habenula': 2.0
-            },
-            'thalamus proper': {
-                'retinal arborization field 4': 2.0
-            }
-        },
-        'pretectum (alar prosomere 1)': {
-            'retinal arborization field 5': 2.0,
-            'retinal arborization field 6': 2.0,
-            'retinal arborization field 7': 2.0,
-            'retinal arborization field 8': 2.0,
-            'retinal arborization field 9': 2.0
-        },
-        'posterior tuberculum, posterior part (basal prosomere 2, dorsal posterior tuberculum)': 2.0,
-        'region of the nucleus of the medial longitudinal fascicle (basal prosomere 1)': {
-            'nucleus of the medial longitudinal fascicle': 2.0
-        }
-    },
-    'mesencephalon (midbrain)': {
-        'tegmentum (midbrain tegmentum)': {
-            'medial tegmentum (entire)': {
-                'medial tegmentum (remaining)': 2.0,
-                'oculomotor nucleus': 2.0
-            },
-            'lateral tegmentum': 2.0
-        },
-        'tectum & tori': {
-            'torus longitudinalis': 2.0,
-            'tectum': {
-                'tectum neuropil': {
-                    'boundary zone between SFGS and SGC': 2.0,
-                    'stratum opticum (SO)': 2.0,
-                    'stratum fibrosum et griseum superficiale (SFGS)': 2.0,
-                    'stratum marginale (SM)': 2.0,
-                    'boundary zone between SAC and periventricular layer': 2.0,
-                    'stratum album centrale (SAC)': 2.0,
-                    'stratum griseum centrale (SGC)': 2.0
-                },
-                'periventricular layer': 2.0
-            },
-            'torus semicircularis': 2.0
-        }
-    },
-    'rhombencephalon (hindbrain)': {
-        'cerebellum': 2.0,
-        'medulla oblongata': {
-            'superior medulla oblongata': {
-                'superior dorsal medulla oblongata': {
-                    'superior dorsal medulla oblongata stripe 1 (entire)': {
-                        'trochlear motor nucleus': 2.0,
-                        'superior dorsal medulla oblongata stripe 1 (remaining)': 2.0
-                    },
-                    'superior dorsal medulla oblongata stripe 2&3': 2.0,
-                    'superior dorsal medulla oblongata stripe 4': 2.0,
-                    'superior dorsal medulla oblongata stripe 5': 2.0,
-                    'medial octavolateralis nucleus': 2.0
-                },
-                'superior ventral medulla oblongata (entire)': {
-                    'anterior (dorsal) trigeminal motor nucleus': 2.0,
-                    'superior raphe': 2.0,
-                    'interpeduncular nucleus': 2.0,
-                    'locus coeruleus': 2.0,
-                    'posterior (ventral) trigeminal motor nucleus': 2.0,
-                    'superior ventral medulla oblongata (remaining)': 2.0
-                }
-            }
-        }
-    },
-    'peripheral nervous system': {
-        'olfactory epithelium': 2.0,
-        'anterior lateral line ganglion': 2.0,
-        'trigeminal ganglion': 2.0,
-        'posterior lateral line ganglion': 2.0,
-        'octaval ganglion': 2.0,
-        'glossopharyngeal ganglion': 2.0
-    }
-}
+debug = False
 
 
 class SecionView(pg.ImageView):
@@ -147,8 +42,7 @@ class SecionView(pg.ImageView):
         self.view.addItem(self.sct)
 
         # Add region image item
-        self.region_image_item = pg.ImageItem()
-        self.view.addItem(self.region_image_item)
+        self.region_image_items = {}
 
         # Add lines
         self.vline = VerticalLine(self)
@@ -201,25 +95,31 @@ class SecionView(pg.ImageView):
 
     def update_regions(self):
 
-        if len(self.window.regions) == 0:
-            return
+        # Hide all
+        for image_item in self.region_image_items.values():
+            image_item.hide()
 
-        images = []
+        # Update all
         for i, (name, region) in enumerate(self.window.regions.items()):
+
+            image_item = self.region_image_items.get(name)
+
+            # Create
+            if image_item is None:
+                image_item = pg.ImageItem()
+                image_item.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_ColorDodge)
+                self.view.addItem(image_item)
+                self.region_image_items[name] = image_item
+
+            # Set colormap
+            color = self.window.region_colors[name]
+            cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], color], linearize=True)
+            image_item.setColorMap(cmap)
+            # image_item.setColorMap('CET-L14')
+
             region_slice = self.get_region_slice(region)
-            color = cc.m_glasbey_dark(i)
-
-            slice_im = np.repeat(region_slice[:, :, None], 4, axis=2) * color
-            # slice_im[:, :, 3] = 50
-            slice_im[region_slice == 0, 3] = 0
-
-            images.append(slice_im)
-
-        im = np.array(images).sum(axis=0)
-        im[im[:, :, 3] > 0, 3] = 50
-        # im = np.clip(im, 0, 255)
-
-        self.region_image_item.setImage(im.astype(np.uint8))
+            image_item.setImage(region_slice)
+            image_item.show()
 
     def update_scatter(self):
 
@@ -246,7 +146,6 @@ class SecionView(pg.ImageView):
         self.hline.blockSignals(False)
 
     def update_index(self, idx: int):
-        print(f'Set index {idx}')
         self.timeLine.setPos(idx)
 
 
@@ -345,11 +244,19 @@ class VerticalLine(MovableLine):
 
 class SearchSelectTreeWidget(QtWidgets.QWidget):
 
+    ContinuousIdRole = 10
+    UniqueIdRole = 20
+    ColorRole = 30
+
     sig_item_selected = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
 
-    def __init__(self, *args):
+    item_count = 0
+
+    def __init__(self, *args, colorpicker: bool = False):
         QtWidgets.QWidget.__init__(self, *args)
+        self.colorpicker = colorpicker
 
         self.setLayout(QtWidgets.QVBoxLayout())
 
@@ -362,9 +269,15 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
         self.tree_widget.headerItem().setText(0, 'Regions')
         self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.tree_widget.headerItem().setText(1, '')
-        self.tree_widget.header().resizeSection(1, 40)
+        self.tree_widget.header().resizeSection(1, 50)
         self.tree_widget.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        if self.colorpicker:
+            self.tree_widget.headerItem().setText(2, '')
+            self.tree_widget.header().resizeSection(2, 25)
+            self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
         self.tree_widget.header().setStretchLastSection(False)
+
+        self.sig_item_color_changed.connect(self.update_colorpicker_button)
 
         self.selected_items = []
 
@@ -372,6 +285,8 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
         self.selected_items.clear()
         self.tree_widget.clear()
+
+        self.item_count = 0
 
         # Recursive build function
         def _build_tree(name: str, data: dict, parent_item = None):
@@ -383,14 +298,26 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             # Add label
             label = QtWidgets.QLabel(name, self.tree_widget)
             self.tree_widget.setItemWidget(tree_item, 0, label)
-            tree_item.setData(0, 1, name)
+            tree_item.setData(0, SearchSelectTreeWidget.UniqueIdRole, name)
+            tree_item.setData(0, SearchSelectTreeWidget.ContinuousIdRole, self.item_count)
 
-            # Add button
-            btn = QtWidgets.QPushButton('select')
-            btn.setContentsMargins(0, 0, 0, 0)
-            btn.clicked.connect(lambda: self.toggle_item(tree_item))
-            self.tree_widget.setItemWidget(tree_item, 1, btn)
+            # Add select button
+            select_btn = QtWidgets.QPushButton('select')
+            select_btn.setContentsMargins(0, 0, 0, 0)
+            select_btn.clicked.connect(lambda: self.toggle_item(tree_item))
+            self.tree_widget.setItemWidget(tree_item, 1, select_btn)
 
+            # Add colorpicker button
+            color_btn = QtWidgets.QPushButton(f' ')
+            color_btn.setContentsMargins(0, 0, 0, 0)
+            self.tree_widget.setItemWidget(tree_item, 2, color_btn)
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(True)
+
+            # Increment before children
+            self.item_count += 1
+
+            # Go through children
             if isinstance(data, dict):
                 for n, d in data.items():
                     tree_item.addChild(_build_tree(n, d, tree_item))
@@ -411,8 +338,7 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
                 child = item.child(i)
                 match = match | _find_text_in_item(child)
 
-            item_text = item.data(0, 1)
-            print(item_text)
+            item_text = item.data(0, SearchSelectTreeWidget.UniqueIdRole)
 
             selected = item in self.selected_items
             found = (len(search_text) > 0 and search_text in item_text)
@@ -436,34 +362,72 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             _find_text_in_item(self.tree_widget.topLevelItem(i))
 
     def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
-        print(f'Selected {tree_item}')
 
         # Add item
         if tree_item not in self.selected_items:
+            print(f'Selected {tree_item}')
 
             self.selected_items.append(tree_item)
 
+            # Set select button
             label = self.tree_widget.itemWidget(tree_item, 0)
-            label.setStyleSheet('background-color: green;')
+            # label.setStyleSheet('background-color: green;')
             btn = self.tree_widget.itemWidget(tree_item, 1)
             btn.setText('remove')
+
+            # Set color and state on color picker button
+            color = cc.m_glasbey_category10(self.get_item_continuous_id(tree_item))[:3]
+            color = [int(255 * c) for c in color]
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(True)
+
+            # Set color to item data
+            self.set_item_color(tree_item, color)
 
             self.sig_item_selected.emit(tree_item)
 
         # Remove item
         else:
+            print(f'Removed {tree_item}')
 
             self.selected_items.remove(tree_item)
 
+            # Select button
             label = self.tree_widget.itemWidget(tree_item, 0)
             label.setStyleSheet('')
             btn = self.tree_widget.itemWidget(tree_item, 1)
             btn.setText('select')
 
+            # Color picker button
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(True)
+
             self.sig_item_removed.emit(tree_item)
+
+    def update_colorpicker_button(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        color = self.get_item_color(tree_item)
+        color_btn = self.tree_widget.itemWidget(tree_item, 2)
+        color_btn.setStyleSheet(f'background-color: rgb{(*color,)};')
+
+    def set_item_color(self, tree_item: QtWidgets.QTreeWidgetItem, color: tuple):
+        tree_item.setData(0, self.ColorRole, color)
+
+        self.sig_item_color_changed.emit(tree_item)
+
+    def get_item_name(self, tree_item: QtWidgets.QTreeWidgetItem):
+        return tree_item.data(0, self.UniqueIdRole)
+
+    def get_item_continuous_id(self, tree_item: QtWidgets.QTreeWidgetItem):
+        return tree_item.data(0, self.ContinuousIdRole)
+
+    def get_item_color(self, tree_item: QtWidgets.QTreeWidgetItem):
+        return tree_item.data(0, self.ColorRole)
 
 
 class ControlPanel(QtWidgets.QWidget):
+
+    sig_region_color_changed = QtCore.Signal(str, list)
 
     def __init__(self, window: Window):
         QtWidgets.QWidget.__init__(self, parent=window)
@@ -473,18 +437,26 @@ class ControlPanel(QtWidgets.QWidget):
         self.setMaximumWidth(400)
         self.setLayout(QtWidgets.QVBoxLayout())
 
-        self.region_tree = SearchSelectTreeWidget()
-        self.region_tree.build_tree(regions_structure)
+        self.region_tree = SearchSelectTreeWidget(colorpicker=True)
+        self.region_tree.build_tree(regions.structure)
+        self.region_tree.sig_item_selected.connect(self.region_selected)
+        self.region_tree.sig_item_removed.connect(self.region_removed)
+        self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
         self.layout().addWidget(self.region_tree)
 
-        # TEMP:
-        btn1 = QtWidgets.QPushButton('periventricular_layer')
-        btn1.clicked.connect(lambda: self.window.add_region('periventricular_layer'))
-        self.layout().addWidget(btn1)
+    def region_selected(self, item: QtWidgets.QTreeWidgetItem):
+        name = self.region_tree.get_item_name(item)
+        self.window.add_region(name)
 
-        btn2 = QtWidgets.QPushButton('pretectum')
-        btn2.clicked.connect(lambda: self.window.add_region('pretectum'))
-        self.layout().addWidget(btn2)
+    def region_color_changed(self, item: QtWidgets.QTreeWidgetItem):
+        name = self.region_tree.get_item_name(item)
+        color = self.region_tree.get_item_color(item)
+
+        self.sig_region_color_changed.emit(name, color)
+
+    def region_removed(self, item: QtWidgets.QTreeWidgetItem):
+        name = item.data(0, SearchSelectTreeWidget.UniqueIdRole)
+        self.window.remove_region(name)
 
 
 class Window(QtWidgets.QMainWindow):
@@ -492,6 +464,7 @@ class Window(QtWidgets.QMainWindow):
     points: Union[List[float], np.ndarray] = None
     marker_image: np.ndarray = None
     regions: Dict[str, np.ndarray] = None
+    region_colors: Dict[str, list] = None
 
     sig_regions_updated = QtCore.Signal()
     sig_marker_image_updated = QtCore.Signal()
@@ -505,6 +478,7 @@ class Window(QtWidgets.QMainWindow):
 
         self.points = points
         self.regions = {}
+        self.region_colors = {}
 
         self.wdgt = QtWidgets.QWidget()
         self.setCentralWidget(self.wdgt)
@@ -512,6 +486,7 @@ class Window(QtWidgets.QMainWindow):
 
         # Add panel
         self.panel = ControlPanel(self)
+        self.panel.sig_region_color_changed.connect(self.update_region_color)
         self.wdgt.layout().addWidget(self.panel, 0, 0, 2, 1)
 
         self.sag_view = SaggitalView(self)
@@ -545,12 +520,27 @@ class Window(QtWidgets.QMainWindow):
         self.trans_view.hline.sig_position_changed.connect(self.cor_view.update_index)
         self.trans_view.vline.sig_position_changed.connect(self.sag_view.update_index)
 
+        marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
+        if not os.path.exists(marker_catalog_path):
+            urllib.request.urlretrieve('https://api.mapzebrain.org/media/downloads/Lines/markers_catalog.json',
+                                       marker_catalog_path)
+        markers_catalog = json.load(open(marker_catalog_path, 'r'))
+        self.marker_structure = {d['name']: d['stack'] for d in markers_catalog}
+
         if marker is not None:
             self.set_marker(marker)
 
         if regions is not None:
             for r in regions:
                 self.add_region(r)
+
+    def marker_path(self):
+        path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'markers')
+
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        return path
 
     def set_marker(self, name: str):
 
@@ -570,12 +560,57 @@ class Window(QtWidgets.QMainWindow):
 
         self.sig_marker_image_updated.emit()
 
+    def region_path(self) -> str:
+        path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'regions')
+
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        return path
+
     def add_region(self, name: str):
+        print(f'Add region {name}')
 
-        path = f'../../ants_registration/ants_registration/mapzebrain/regiondata/{name}.tif'
+        self.regions[name] = self.load_region(name)
 
-        print(f'Load region {path}')
-        self.regions[name] = np.swapaxes(np.moveaxis(tifffile.imread(path), 0, 2), 0, 1)
+        print(f'Region {name} added')
+        self.sig_regions_updated.emit()
+
+    def remove_region(self, name: str):
+        print(f'Remove region {name}')
+
+        if name in self.regions:
+            del self.regions[name]
+
+        self.sig_regions_updated.emit()
+
+    def load_region(self, name: str) -> np.ndarray:
+
+        name_str = name.replace(' ', '_')
+        file_path = os.path.join(self.region_path(), f'{name_str}.tif')
+        print(f'Load region {file_path}')
+
+        if not os.path.exists(file_path):
+            self.download_region(name_str)
+
+        return np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)
+
+    def download_region(self, name_str: str):
+
+        try:
+            url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.tif'
+
+            print(f'Download region data for {name_str} from {url}')
+            urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
+        except:
+            print('Failed to load region data')
+            name_str_alt = name_str.split('(')[0].strip('_')
+            url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str_alt}/{name_str_alt}.tif'
+            print(f'Try alternative {url}')
+            urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
+
+    def update_region_color(self, name: str, color: Union[list, tuple]):
+        self.region_colors[name] = [*color,]
 
         self.sig_regions_updated.emit()
 
