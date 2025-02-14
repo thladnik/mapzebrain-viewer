@@ -3,8 +3,8 @@ structure = {
     'prosencephalon (forebrain)': {
         'telencephalon': {
             'olfactory bulb': 2.0,
-            'pallium (dorsal telencephalon)': 2.0,
-            'subpallium (ventral telencephalon)': 2.0
+            'dorsal telencephalon (pallium)': 2.0,
+            'ventral telencephalon (subpallium)': 2.0
         },
         'hypothalamus': {
             'rostral hypothalamus': 2.0,
@@ -15,17 +15,17 @@ structure = {
             'caudal hypothalamus': 2.0,
             'pituitary (hypophysis)': 2.0
         },
-        'preoptic area': {
+        'preoptic region': {
             'retinal arborization field 1': 2.0,
             'retinal arborization field 2': 2.0
         },
-        'posterior tuberculum, anterior part (basal prosomere 3, ventral posterior tuberculum)': 2.0,
+        'posterior tuberculum (basal part of prethalamus and thalamus)': 2.0,
         'retina': 2.0,
         'eminentia thalami': {
             'ventral entopeduncular nucleus': 2.0,
             'eminentia thalami (remaining)': 2.0
         },
-        'prethalamus (alar prosomere 3, ventral thalamus)': {
+        'prethalamus (ventral thalamus)': {
             'retinal arborization field 3': 2.0
         },
         'thalamus (alar prosomere 2, dorsal thalamus)': {

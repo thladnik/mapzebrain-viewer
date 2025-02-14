@@ -245,7 +245,7 @@ class VerticalLine(MovableLine):
 class SearchSelectTreeWidget(QtWidgets.QWidget):
 
     ContinuousIdRole = 10
-    UniqueIdRole = 20
+    UniqueNameRole = 20
     ColorRole = 30
 
     sig_item_selected = QtCore.Signal(QtWidgets.QTreeWidgetItem)
@@ -257,14 +257,15 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
     def __init__(self, *args, colorpicker: bool = False):
         QtWidgets.QWidget.__init__(self, *args)
         self.colorpicker = colorpicker
-
         self.setLayout(QtWidgets.QVBoxLayout())
 
-        # Add regions tree widget
+        # Add searchfield
         self.search_field = QtWidgets.QLineEdit('')
         self.search_field.setPlaceholderText('Type to search for region')
         self.search_field.textChanged.connect(self.search_tree)
         self.layout().addWidget(self.search_field)
+
+        # Add tree widget
         self.tree_widget = QtWidgets.QTreeWidget()
         self.tree_widget.headerItem().setText(0, 'Regions')
         self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -298,11 +299,9 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             # Add label
             label = QtWidgets.QLabel(name, self.tree_widget)
             self.tree_widget.setItemWidget(tree_item, 0, label)
-            tree_item.setData(0, SearchSelectTreeWidget.UniqueIdRole, name)
-            tree_item.setData(0, SearchSelectTreeWidget.ContinuousIdRole, self.item_count)
 
             # Add select button
-            select_btn = QtWidgets.QPushButton('select')
+            select_btn = QtWidgets.QPushButton('show')
             select_btn.setContentsMargins(0, 0, 0, 0)
             select_btn.clicked.connect(lambda: self.toggle_item(tree_item))
             self.tree_widget.setItemWidget(tree_item, 1, select_btn)
@@ -313,6 +312,10 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             self.tree_widget.setItemWidget(tree_item, 2, color_btn)
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
             color_btn.setDisabled(True)
+
+            # Set item data
+            tree_item.setData(0, SearchSelectTreeWidget.UniqueNameRole, name)
+            tree_item.setData(0, SearchSelectTreeWidget.ContinuousIdRole, self.item_count)
 
             # Increment before children
             self.item_count += 1
@@ -325,7 +328,6 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             return tree_item
 
         for tl_name, tl_data in data.items():
-            # print(tl_name, tl_data)
             item = _build_tree(tl_name, tl_data)
             self.tree_widget.addTopLevelItem(item)
         self.layout().addWidget(self.tree_widget)
@@ -338,17 +340,21 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
                 child = item.child(i)
                 match = match | _find_text_in_item(child)
 
-            item_text = item.data(0, SearchSelectTreeWidget.UniqueIdRole)
+            # Get text to search
+            item_text = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
 
+            # Check match
             selected = item in self.selected_items
             found = (len(search_text) > 0 and search_text in item_text)
             match |= found | selected
 
+            # Set visibility and expansion state
             item.setHidden(not match)
             if len(search_text) == 0:
                 item.setHidden(False)
             item.setExpanded(match)
 
+            # Update label to mark search phrase
             lbl = self.tree_widget.itemWidget(item, 0)
             if match:
                 lbl.setText(item_text.replace(search_text, f'<span style="color: red">{search_text}</span>'))
@@ -370,13 +376,13 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             self.selected_items.append(tree_item)
 
             # Set select button
-            label = self.tree_widget.itemWidget(tree_item, 0)
-            # label.setStyleSheet('background-color: green;')
             btn = self.tree_widget.itemWidget(tree_item, 1)
-            btn.setText('remove')
+            btn.setText('hide')
 
             # Set color and state on color picker button
-            color = cc.m_glasbey_category10(self.get_item_continuous_id(tree_item))[:3]
+            # color = cc.m_glasbey_bw(self.get_item_continuous_id(tree_item))[:3]
+            # color = cc.m_glasbey_hv(self.get_item_continuous_id(tree_item))[:3]
+            color = cc.m_glasbey_warm(self.get_item_continuous_id(tree_item))[:3]
             color = [int(255 * c) for c in color]
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
             color_btn.setDisabled(True)
@@ -390,18 +396,19 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
         else:
             print(f'Removed {tree_item}')
 
-            self.selected_items.remove(tree_item)
-
-            # Select button
+            # Update select button
             label = self.tree_widget.itemWidget(tree_item, 0)
             label.setStyleSheet('')
             btn = self.tree_widget.itemWidget(tree_item, 1)
-            btn.setText('select')
+            btn.setText('show')
 
-            # Color picker button
+            # Update color picker button
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setStyleSheet('')
             color_btn.setDisabled(True)
 
+            # Remove item
+            self.selected_items.remove(tree_item)
             self.sig_item_removed.emit(tree_item)
 
     def update_colorpicker_button(self, tree_item: QtWidgets.QTreeWidgetItem):
@@ -416,7 +423,7 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
         self.sig_item_color_changed.emit(tree_item)
 
     def get_item_name(self, tree_item: QtWidgets.QTreeWidgetItem):
-        return tree_item.data(0, self.UniqueIdRole)
+        return tree_item.data(0, self.UniqueNameRole)
 
     def get_item_continuous_id(self, tree_item: QtWidgets.QTreeWidgetItem):
         return tree_item.data(0, self.ContinuousIdRole)
@@ -425,12 +432,71 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
         return tree_item.data(0, self.ColorRole)
 
 
-class ControlPanel(QtWidgets.QWidget):
+class RoiListWidget(QtWidgets.QGroupBox):
+
+    _drop_text = 'Drop files to load...'
+
+    sig_path_dropped = QtCore.Signal(str)
+
+    def __init__(self, parent=None):
+        QtWidgets.QGroupBox.__init__(self, 'ROIs', parent)
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(300)
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        self.drop_label = QtWidgets.QLabel(self._drop_text)
+        self.layout().addWidget(self.drop_label)
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.layout().addWidget(self.list_widget)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            ext = event.mimeData().urls()[0].fileName().split('.')[-1]
+            self.list_widget.hide()
+            self.setFixedSize(self.size())
+
+            if ext.lower() in ['h5', 'hdf5', 'npy', 'json', 'csv']:
+                self.drop_label.setText(f'Drop {ext.upper()} file here to load')
+                self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            else:
+                self.drop_label.setText(f'Unable to import file with extension {ext.upper()}')
+                self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+            event.accept()
+
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.reset_widgets()
+        event.accept()
+
+    def dropEvent(self, event):
+        self.drop_label.setText('Loading data...')
+
+        QtWidgets.QApplication.instance().processEvents()
+
+        for url in event.mimeData().urls():
+            print(f'Load {url}')
+
+        self.reset_widgets()
+
+    def reset_widgets(self):
+        self.list_widget.show()
+        self.drop_label.setText(self._drop_text)
+
+        self.setMaximumSize(9999, 9999)
+        self.setMinimumSize(0, 0)
+
+
+class ControlPanel(QtWidgets.QGroupBox):
 
     sig_region_color_changed = QtCore.Signal(str, list)
 
     def __init__(self, window: Window):
-        QtWidgets.QWidget.__init__(self, parent=window)
+        QtWidgets.QGroupBox.__init__(self, 'Navigation', parent=window)
         self.window = window
 
         self.setMinimumWidth(300)
@@ -444,6 +510,9 @@ class ControlPanel(QtWidgets.QWidget):
         self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
         self.layout().addWidget(self.region_tree)
 
+        self.roi_list = RoiListWidget()
+        self.layout().addWidget(self.roi_list)
+
     def region_selected(self, item: QtWidgets.QTreeWidgetItem):
         name = self.region_tree.get_item_name(item)
         self.window.add_region(name)
@@ -455,7 +524,7 @@ class ControlPanel(QtWidgets.QWidget):
         self.sig_region_color_changed.emit(name, color)
 
     def region_removed(self, item: QtWidgets.QTreeWidgetItem):
-        name = item.data(0, SearchSelectTreeWidget.UniqueIdRole)
+        name = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
         self.window.remove_region(name)
 
 
@@ -475,6 +544,7 @@ class Window(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self)
         self.resize(1400, 800)
         self.show()
+        self.setWindowTitle('MapZeBrain Viewer')
 
         self.points = points
         self.regions = {}
@@ -482,27 +552,34 @@ class Window(QtWidgets.QMainWindow):
 
         self.wdgt = QtWidgets.QWidget()
         self.setCentralWidget(self.wdgt)
-        self.wdgt.setLayout(QtWidgets.QGridLayout())
+        self.wdgt.setLayout(QtWidgets.QHBoxLayout())
 
         # Add panel
         self.panel = ControlPanel(self)
         self.panel.sig_region_color_changed.connect(self.update_region_color)
-        self.wdgt.layout().addWidget(self.panel, 0, 0, 2, 1)
+        self.wdgt.layout().addWidget(self.panel)
 
+        self.browser = QtWidgets.QGroupBox('Anatomy browser')
+        self.browser.setLayout(QtWidgets.QGridLayout())
+        self.wdgt.layout().addWidget(self.browser)
+
+        # Saggital view
         self.sag_view = SaggitalView(self)
         self.sig_marker_image_updated.connect(self.sag_view.update_marker_image)
         self.sig_regions_updated.connect(self.sag_view.update_regions)
-        self.wdgt.layout().addWidget(self.sag_view, 0, 1, 1, 2)
+        self.browser.layout().addWidget(self.sag_view, 0, 0, 1, 2)
 
+        # Coronal view
         self.cor_view = CoronalView(self)
         self.sig_marker_image_updated.connect(self.cor_view.update_marker_image)
         self.sig_regions_updated.connect(self.cor_view.update_regions)
-        self.wdgt.layout().addWidget(self.cor_view, 1, 1, 1, 2)
+        self.browser.layout().addWidget(self.cor_view, 1, 0, 1, 2)
 
+        # Transversal view
         self.trans_view = TransversalView(self)
         self.sig_marker_image_updated.connect(self.trans_view.update_marker_image)
         self.sig_regions_updated.connect(self.trans_view.update_regions)
-        self.wdgt.layout().addWidget(self.trans_view, 1, 3)
+        self.browser.layout().addWidget(self.trans_view, 1, 2)
 
         # Connect line updates
         self.sag_view.sig_index_changed.connect(self.cor_view.update_hline)
@@ -519,6 +596,9 @@ class Window(QtWidgets.QMainWindow):
         self.trans_view.sig_index_changed.connect(self.cor_view.update_vline)
         self.trans_view.hline.sig_position_changed.connect(self.cor_view.update_index)
         self.trans_view.vline.sig_position_changed.connect(self.sag_view.update_index)
+
+        # self.drop_widget = QtWidgets.QGroupBox('Import data')
+        # self.wdgt.layout().addWidget(self.drop_widget)
 
         marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
