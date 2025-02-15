@@ -4,11 +4,15 @@ import json
 import os
 import urllib.request
 from abc import abstractmethod
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 import colorcet as cc
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
+import pyqtgraph.opengl as gl
+import stl
+from pyqtgraph import Vector
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import tifffile
 
@@ -100,7 +104,7 @@ class SecionView(pg.ImageView):
             image_item.hide()
 
         # Update all
-        for i, (name, region) in enumerate(self.window.regions.items()):
+        for i, (name, (region, _)) in enumerate(self.window.regions.items()):
 
             image_item = self.region_image_items.get(name)
 
@@ -242,11 +246,60 @@ class VerticalLine(MovableLine):
         self.sig_position_changed.emit(int(line.getPos()[0]))
 
 
+class VolumeView(gl.GLViewWidget):
+
+    mesh_items: Dict[str, gl.GLMeshItem] = {}
+
+    def __init__(self, window: Window):
+        gl.GLViewWidget.__init__(self)
+        self.window = window
+        self.opts['fov'] = 1.
+
+        self.scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pxMode=False)
+        self.scatter_item .setGLOptions('additive')
+        self.addItem(self.scatter_item)
+
+    def marker_image_updated(self):
+        self.setCameraPosition(pos=Vector(*[int(i //2) for i in self.window.marker_image.shape[:3]]), distance=50000)
+        self.setProjection()
+
+    def update_scatter(self):
+        self.scatter_item.setData(pos=self.window.points)
+        self.scatter_item.setData(color=(1., 1., 1., 0.1))
+
+    def update_regions(self):
+
+        for mesh_item in self.mesh_items.values():
+            mesh_item.hide()
+
+        for i, (name, (_, region_mesh)) in enumerate(self.window.regions.items()):
+
+            if name not in self.mesh_items:
+                data_item = gl.MeshData(vertexes=region_mesh.vectors, )
+
+                mesh_item = gl.GLMeshItem(meshdata=data_item, smooth=True, shader='balloon')
+                mesh_item.setGLOptions('additive')
+
+                self.addItem(mesh_item)
+
+                self.mesh_items[name] = mesh_item
+
+            mesh_item = self.mesh_items[name]
+
+            # Show mesh
+            mesh_item.show()
+
+            # Set color
+            color = self.window.region_colors[name]
+            mesh_item.setColor((*[c / 255 for c in color[:3]], 0.2))
+
+
+
 class SearchSelectTreeWidget(QtWidgets.QWidget):
 
-    ContinuousIdRole = 10
-    UniqueNameRole = 20
-    ColorRole = 30
+    ContinuousIdRole = 40
+    UniqueNameRole = 50
+    ColorRole = 60
 
     sig_item_selected = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
@@ -436,7 +489,7 @@ class RoiListWidget(QtWidgets.QGroupBox):
 
     _drop_text = 'Drop files to load...'
 
-    sig_path_dropped = QtCore.Signal(str)
+    sig_path_added = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         QtWidgets.QGroupBox.__init__(self, 'ROIs', parent)
@@ -479,7 +532,11 @@ class RoiListWidget(QtWidgets.QGroupBox):
         QtWidgets.QApplication.instance().processEvents()
 
         for url in event.mimeData().urls():
-            print(f'Load {url}')
+            print(f'Load ROIs from {url}')
+            ext = url.fileName().split('.')[-1]
+
+            if ext in ['h5', 'hdf5', 'npy', 'json', 'csv']:
+                self.sig_path_added.emit(url.path().strip('/'))
 
         self.reset_widgets()
 
@@ -494,6 +551,7 @@ class RoiListWidget(QtWidgets.QGroupBox):
 class ControlPanel(QtWidgets.QGroupBox):
 
     sig_region_color_changed = QtCore.Signal(str, list)
+    sig_roi_data_changed = QtCore.Signal()
 
     def __init__(self, window: Window):
         QtWidgets.QGroupBox.__init__(self, 'Navigation', parent=window)
@@ -511,7 +569,36 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.layout().addWidget(self.region_tree)
 
         self.roi_list = RoiListWidget()
+        self.roi_list.sig_path_added.connect(self.roi_path_added)
         self.layout().addWidget(self.roi_list)
+
+    def roi_path_added(self, path: str):
+        ext = path.split('.')[-1]
+
+        if ext in ['h5', 'hdf5']:
+            df: pd.DataFrame = pd.read_hdf(path)
+            keys = []
+            for _n in ['x', 'y', 'z']:
+                _keys = [k for k in df.keys() if _n in k]
+                if len(_keys) > 0:
+                    keys.append(_keys[0])
+
+            if len(keys) == 0:
+                raise KeyError('No matching coordinate keys found for x/y/z')
+
+            print(f'Found coordinate keys: {keys}')
+
+            data = df[keys].values
+
+        elif ext == 'npy':
+            data = np.load(path)
+
+        else:
+            data = None
+
+        self.window.points = data
+
+        self.sig_roi_data_changed.emit()
 
     def region_selected(self, item: QtWidgets.QTreeWidgetItem):
         name = self.region_tree.get_item_name(item)
@@ -532,23 +619,22 @@ class Window(QtWidgets.QMainWindow):
 
     points: Union[List[float], np.ndarray] = None
     marker_image: np.ndarray = None
-    regions: Dict[str, np.ndarray] = None
-    region_colors: Dict[str, list] = None
+    regions: Dict[str, Tuple[np.ndarray, Union[None, stl.Mesh]]] = {}
+    region_colors: Dict[str, list] = {}
 
     sig_regions_updated = QtCore.Signal()
     sig_marker_image_updated = QtCore.Signal()
 
-    def __init__(self, points: Union[List[float], np.ndarray] = None,
+    def __init__(self,
+                 points: Union[List[float], np.ndarray] = None,
                  marker: str = None,
                  regions: List[str] = None):
         QtWidgets.QMainWindow.__init__(self)
-        self.resize(1400, 800)
+        self.resize(1600, 800)
         self.show()
         self.setWindowTitle('MapZeBrain Viewer')
 
         self.points = points
-        self.regions = {}
-        self.region_colors = {}
 
         self.wdgt = QtWidgets.QWidget()
         self.setCentralWidget(self.wdgt)
@@ -567,19 +653,25 @@ class Window(QtWidgets.QMainWindow):
         self.sag_view = SaggitalView(self)
         self.sig_marker_image_updated.connect(self.sag_view.update_marker_image)
         self.sig_regions_updated.connect(self.sag_view.update_regions)
-        self.browser.layout().addWidget(self.sag_view, 0, 0, 1, 2)
+        self.browser.layout().addWidget(self.sag_view, 0, 0)
 
         # Coronal view
         self.cor_view = CoronalView(self)
         self.sig_marker_image_updated.connect(self.cor_view.update_marker_image)
         self.sig_regions_updated.connect(self.cor_view.update_regions)
-        self.browser.layout().addWidget(self.cor_view, 1, 0, 1, 2)
+        self.browser.layout().addWidget(self.cor_view, 1, 0)
 
         # Transversal view
         self.trans_view = TransversalView(self)
         self.sig_marker_image_updated.connect(self.trans_view.update_marker_image)
         self.sig_regions_updated.connect(self.trans_view.update_regions)
-        self.browser.layout().addWidget(self.trans_view, 1, 2)
+        self.browser.layout().addWidget(self.trans_view, 1, 1)
+
+        # Volumetric view
+        self.vol_view = VolumeView(self)
+        self.sig_marker_image_updated.connect(self.vol_view.marker_image_updated)
+        self.sig_regions_updated.connect(self.vol_view.update_regions)
+        self.browser.layout().addWidget(self.vol_view, 0, 1)
 
         # Connect line updates
         self.sag_view.sig_index_changed.connect(self.cor_view.update_hline)
@@ -597,8 +689,11 @@ class Window(QtWidgets.QMainWindow):
         self.trans_view.hline.sig_position_changed.connect(self.cor_view.update_index)
         self.trans_view.vline.sig_position_changed.connect(self.sag_view.update_index)
 
-        # self.drop_widget = QtWidgets.QGroupBox('Import data')
-        # self.wdgt.layout().addWidget(self.drop_widget)
+        # Connect scatter plot updates
+        self.panel.sig_roi_data_changed.connect(self.sag_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.cor_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.trans_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.vol_view.update_scatter)
 
         marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
@@ -664,7 +759,7 @@ class Window(QtWidgets.QMainWindow):
 
         self.sig_regions_updated.emit()
 
-    def load_region(self, name: str) -> np.ndarray:
+    def load_region(self, name: str) -> Tuple[np.ndarray, stl.Mesh]:
 
         name_str = name.replace(' ', '_')
         file_path = os.path.join(self.region_path(), f'{name_str}.tif')
@@ -673,21 +768,29 @@ class Window(QtWidgets.QMainWindow):
         if not os.path.exists(file_path):
             self.download_region(name_str)
 
-        return np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)
+        im = np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)
+
+        try:
+            mesh = stl.Mesh.from_file(os.path.join(self.region_path(), f'{name_str}.stl'))
+        except FileNotFoundError as e:
+            print(f'WARNING: no mesh data for {name}')
+            mesh = None
+
+        return im, mesh
 
     def download_region(self, name_str: str):
 
-        try:
-            url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.tif'
+        url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.tif'
+        print(f'Download region data for {name_str} from {url}')
+        urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
 
-            print(f'Download region data for {name_str} from {url}')
-            urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
-        except:
-            print('Failed to load region data')
-            name_str_alt = name_str.split('(')[0].strip('_')
-            url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str_alt}/{name_str_alt}.tif'
-            print(f'Try alternative {url}')
-            urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
+        try:
+            url_stl = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.stl'
+            print(f'Download region mesh data for {name_str} from {url_stl}')
+            urllib.request.urlretrieve(url_stl, os.path.join(self.region_path(), f'{name_str}.stl'))
+
+        except urllib.request.HTTPError as _:
+            print('WARNING: Failed to load region mesh data')
 
     def update_region_color(self, name: str, color: Union[list, tuple]):
         self.region_colors[name] = [*color,]
