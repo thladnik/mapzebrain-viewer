@@ -732,6 +732,10 @@ class Window(QtWidgets.QMainWindow):
         self.show()
         self.setWindowTitle('MapZeBrain Viewer')
 
+        # TODO: handle loading of coordinate data uniformly
+        if isinstance(points, pd.DataFrame):
+            points = points.values
+
         self.points = points
 
         self.wdgt = QtWidgets.QWidget()
