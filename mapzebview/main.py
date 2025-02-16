@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+import zipfile
 from abc import abstractmethod
 from typing import Dict, List, Tuple, Union
 
@@ -16,6 +17,7 @@ from pyqtgraph import Vector
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import tifffile
 
+import mapzebview
 from mapzebview import regions
 
 debug = False
@@ -486,6 +488,36 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
         for i in range(self.tree_widget.topLevelItemCount()):
             _find_text_in_item(self.tree_widget.topLevelItem(i), False)
 
+    def select_exact_match_in_tree(self, search_text: str):
+
+        def _find_item_in_tree(item: QtWidgets.QTreeWidgetItem) -> Union[QtWidgets.QTreeWidgetItem, None]:
+
+            # Get text to search
+            item_text = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
+
+            if item_text == search_text:
+                return item
+
+            # Go through children
+            for i in range(item.childCount()):
+                child = item.child(i)
+                ret = _find_item_in_tree(child)
+
+                if ret is not None:
+                    return ret
+
+            return None
+
+        # Run search
+        for i in range(self.tree_widget.topLevelItemCount()):
+            final_ret = _find_item_in_tree(self.tree_widget.topLevelItem(i))
+
+            if final_ret is not None:
+                self.toggle_item(final_ret)
+                # Search tree to cause selected item to expand
+                self.search_tree('')
+                break
+
     def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
 
         # Add item
@@ -766,17 +798,26 @@ class Window(QtWidgets.QMainWindow):
 
         marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
+            print('Get marker catalog from MapZeBrain')
             urllib.request.urlretrieve('https://api.mapzebrain.org/media/downloads/Lines/markers_catalog.json',
                                        marker_catalog_path)
+
+        print('Load marker catalog')
         markers_catalog = json.load(open(marker_catalog_path, 'r'))
         self.marker_structure = {d['name']: d['stack'] for d in markers_catalog}
 
-        if marker is not None:
-            self.set_marker(marker)
+        # Make sure marker line is set
+        if marker is None:
+            marker = mapzebview.default_marker_name
+            print(f'Set to use defaul marker line: {marker}')
 
+        # Set
+        self.set_marker(marker)
+
+        # If regions are pre-set, add them
         if regions is not None:
             for r in regions:
-                self.add_region(r)
+                self.panel.region_tree.select_exact_match_in_tree(r)
 
     def marker_path(self):
         path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'markers')
@@ -790,8 +831,9 @@ class Window(QtWidgets.QMainWindow):
 
         if not debug:
             print(f'Set marker to {name}')
-            path = f'../../ants_registration/ants_registration/mapzebrain/{name}.tif'
-            self.marker_image = np.swapaxes(np.moveaxis(tifffile.imread(path), 0, 2), 0, 1)[:,:,:,None]
+            self.marker_image = self.load_marker(name)
+            # path = f'../../ants_registration/ants_registration/mapzebrain/{name}.tif'
+            # self.marker_image = np.swapaxes(np.moveaxis(tifffile.imread(path), 0, 2), 0, 1)[:,:,:,None]
 
         else:
             # Debug image:
@@ -803,6 +845,32 @@ class Window(QtWidgets.QMainWindow):
             self.marker_image = im
 
         self.sig_marker_image_updated.emit()
+
+    def load_marker(self, name: str) -> np.ndarray:
+
+        # Get file name from URL
+        file_name = self.marker_structure[name].split('/')[-1].split('.')[0]
+
+        file_path = os.path.join(self.marker_path(), f'{file_name}.tif')
+        print(f'Load marker line {name} from {file_path}')
+        if not os.path.exists(file_path):
+            self.download_marker(name)
+
+        return np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)[:, :, :, None]
+
+    def download_marker(self, name: str):
+
+        url = self.marker_structure[name]
+        zip_path = os.path.join(self.marker_path(), f'{name}.zip')
+        print(f'Download marker data for {name} from {url}')
+        urllib.request.urlretrieve(url, zip_path)
+
+        # Extract
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(self.marker_path())
+
+        # Remove ZIP
+        os.remove(zip_path)
 
     def region_path(self) -> str:
         path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'regions')
