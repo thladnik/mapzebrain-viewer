@@ -249,6 +249,13 @@ class VerticalLine(MovableLine):
 class VolumeView(gl.GLViewWidget):
 
     mesh_items: Dict[str, gl.GLMeshItem] = {}
+    sag_plane_mesh_item: gl.GLMeshItem = None
+
+    sag_plane_verts = np.array([[0.5, 0, 0], [0.5, 1, 0], [0.5, 1, 1], [0.5, 0, 1]], dtype=np.float32)
+    cor_plane_verts = np.array([[0, 0, 0.0], [1, 0, 0.5], [1, 1, 0.5], [0, 1, 0.5]], dtype=np.float32)
+    trans_plane_verts = np.array([[0, 0.5, 0], [1, 0.5, 0], [1, 0.5, 1], [0, 0.5, 1]], dtype=np.float32)
+
+    volume_bounds: np.ndarray = None
 
     def __init__(self, window: Window):
         gl.GLViewWidget.__init__(self)
@@ -259,12 +266,70 @@ class VolumeView(gl.GLViewWidget):
         self.scatter_item .setGLOptions('additive')
         self.addItem(self.scatter_item)
 
+        sag_plane_data = gl.MeshData(vertexes=self.sag_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
+        self.saggital_plane = gl.GLMeshItem(meshdata=sag_plane_data, smooth=True, shader='balloon')
+        self.saggital_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        self.saggital_plane.setGLOptions('additive')
+        self.addItem(self.saggital_plane)
+
+        cor_plane_data = gl.MeshData(vertexes=self.cor_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
+        self.coronal_plane = gl.GLMeshItem(meshdata=cor_plane_data, smooth=True, shader='balloon')
+        self.coronal_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        self.coronal_plane.setGLOptions('additive')
+        self.addItem(self.coronal_plane)
+
+        trans_plane_data = gl.MeshData(vertexes=self.trans_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
+        self.transverse_plane = gl.GLMeshItem(meshdata=trans_plane_data, smooth=True, shader='balloon')
+        self.transverse_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        self.transverse_plane.setGLOptions('additive')
+        self.addItem(self.transverse_plane)
+
     def marker_image_updated(self):
-        self.setCameraPosition(pos=Vector(*[int(i //2) for i in self.window.marker_image.shape[:3]]), distance=50000)
-        self.setProjection()
+
+        self.volume_bounds = np.array(self.window.marker_image.shape[:3], dtype=np.float32)
+
+        # Set plane extents and position
+        self.set_saggital_data(self.window.marker_image.shape[0] // 2)
+        self.set_coronal_data(self.window.marker_image.shape[2] // 2)
+        self.set_transverse_data(self.window.marker_image.shape[1] // 2)
+
+        # Set camera
+        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in self.window.marker_image.shape[:3]]), distance=60000)
+
+    def set_saggital_data(self, current_idx: int):
+
+        if self.volume_bounds is None:
+            return
+
+        vertices = self.sag_plane_verts * self.volume_bounds[None, :]
+        vertices[:, 0] = self.volume_bounds[0] - current_idx
+        self.saggital_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
+                                                             faces=np.array([[0, 1, 2], [2, 3, 0]])))
+
+    def set_coronal_data(self, current_idx: int):
+
+        if self.volume_bounds is None:
+            return
+
+        vertices = self.cor_plane_verts * self.volume_bounds[None, :]
+        vertices[:, 2] = current_idx
+        self.coronal_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
+                                                            faces=np.array([[0, 1, 2], [2, 3, 0]])))
+
+    def set_transverse_data(self, current_idx: int):
+
+        if self.volume_bounds is None:
+            return
+
+        vertices = self.trans_plane_verts * self.volume_bounds[None, :]
+        vertices[:, 1] = current_idx
+        self.transverse_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
+                                                               faces=np.array([[0, 1, 2], [2, 3, 0]])))
 
     def update_scatter(self):
-        self.scatter_item.setData(pos=self.window.points)
+        points = self.window.points
+        points[:, 0] = self.volume_bounds[0] - points[:, 0]
+        self.scatter_item.setData(pos=points)
         self.scatter_item.setData(color=(1., 1., 1., 0.1))
 
     def update_regions(self):
@@ -275,8 +340,11 @@ class VolumeView(gl.GLViewWidget):
         for i, (name, (_, region_mesh)) in enumerate(self.window.regions.items()):
 
             if name not in self.mesh_items:
-                data_item = gl.MeshData(vertexes=region_mesh.vectors, )
+                vecs = region_mesh.vectors
+                # Invert X for GL view
+                vecs[:, :, 0] = self.volume_bounds[0] - vecs[:, :, 0]
 
+                data_item = gl.MeshData(vertexes=vecs)
                 mesh_item = gl.GLMeshItem(meshdata=data_item, smooth=True, shader='balloon')
                 mesh_item.setGLOptions('additive')
 
@@ -292,7 +360,6 @@ class VolumeView(gl.GLViewWidget):
             # Set color
             color = self.window.region_colors[name]
             mesh_item.setColor((*[c / 255 for c in color[:3]], 0.2))
-
 
 
 class SearchSelectTreeWidget(QtWidgets.QWidget):
@@ -387,11 +454,10 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
     def search_tree(self, search_text: str):
 
-        def _find_text_in_item(item: QtWidgets.QTreeWidgetItem) -> bool:
-            match = False
+        def _find_text_in_item(item: QtWidgets.QTreeWidgetItem, match: bool) -> bool:
             for i in range(item.childCount()):
                 child = item.child(i)
-                match = match | _find_text_in_item(child)
+                match |= _find_text_in_item(child, match)
 
             # Get text to search
             item_text = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
@@ -418,7 +484,7 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
         # Run search
         for i in range(self.tree_widget.topLevelItemCount()):
-            _find_text_in_item(self.tree_widget.topLevelItem(i))
+            _find_text_in_item(self.tree_widget.topLevelItem(i), False)
 
     def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
 
@@ -650,50 +716,53 @@ class Window(QtWidgets.QMainWindow):
         self.wdgt.layout().addWidget(self.browser)
 
         # Saggital view
-        self.sag_view = SaggitalView(self)
-        self.sig_marker_image_updated.connect(self.sag_view.update_marker_image)
-        self.sig_regions_updated.connect(self.sag_view.update_regions)
-        self.browser.layout().addWidget(self.sag_view, 0, 0)
+        self.saggital_view = SaggitalView(self)
+        self.sig_marker_image_updated.connect(self.saggital_view.update_marker_image)
+        self.sig_regions_updated.connect(self.saggital_view.update_regions)
+        self.browser.layout().addWidget(self.saggital_view, 0, 0)
 
         # Coronal view
-        self.cor_view = CoronalView(self)
-        self.sig_marker_image_updated.connect(self.cor_view.update_marker_image)
-        self.sig_regions_updated.connect(self.cor_view.update_regions)
-        self.browser.layout().addWidget(self.cor_view, 1, 0)
+        self.coronal_view = CoronalView(self)
+        self.sig_marker_image_updated.connect(self.coronal_view.update_marker_image)
+        self.sig_regions_updated.connect(self.coronal_view.update_regions)
+        self.browser.layout().addWidget(self.coronal_view, 1, 0)
 
         # Transversal view
-        self.trans_view = TransversalView(self)
-        self.sig_marker_image_updated.connect(self.trans_view.update_marker_image)
-        self.sig_regions_updated.connect(self.trans_view.update_regions)
-        self.browser.layout().addWidget(self.trans_view, 1, 1)
+        self.transverse_view = TransversalView(self)
+        self.sig_marker_image_updated.connect(self.transverse_view.update_marker_image)
+        self.sig_regions_updated.connect(self.transverse_view.update_regions)
+        self.browser.layout().addWidget(self.transverse_view, 1, 1)
 
         # Volumetric view
-        self.vol_view = VolumeView(self)
-        self.sig_marker_image_updated.connect(self.vol_view.marker_image_updated)
-        self.sig_regions_updated.connect(self.vol_view.update_regions)
-        self.browser.layout().addWidget(self.vol_view, 0, 1)
+        self.volume_view = VolumeView(self)
+        self.sig_marker_image_updated.connect(self.volume_view.marker_image_updated)
+        self.sig_regions_updated.connect(self.volume_view.update_regions)
+        self.browser.layout().addWidget(self.volume_view, 0, 1)
 
         # Connect line updates
-        self.sag_view.sig_index_changed.connect(self.cor_view.update_hline)
-        self.sag_view.sig_index_changed.connect(self.trans_view.update_vline)
-        self.sag_view.hline.sig_position_changed.connect(self.cor_view.update_index)
-        self.sag_view.vline.sig_position_changed.connect(self.trans_view.update_index)
+        self.saggital_view.sig_index_changed.connect(self.coronal_view.update_hline)
+        self.saggital_view.sig_index_changed.connect(self.transverse_view.update_vline)
+        self.saggital_view.hline.sig_position_changed.connect(self.coronal_view.update_index)
+        self.saggital_view.vline.sig_position_changed.connect(self.transverse_view.update_index)
+        self.saggital_view.sig_index_changed.connect(self.volume_view.set_saggital_data)
 
-        self.cor_view.sig_index_changed.connect(self.sag_view.update_hline)
-        self.cor_view.sig_index_changed.connect(self.trans_view.update_hline)
-        self.cor_view.hline.sig_position_changed.connect(self.sag_view.update_index)
-        self.cor_view.vline.sig_position_changed.connect(self.trans_view.update_index)
+        self.coronal_view.sig_index_changed.connect(self.saggital_view.update_hline)
+        self.coronal_view.sig_index_changed.connect(self.transverse_view.update_hline)
+        self.coronal_view.hline.sig_position_changed.connect(self.saggital_view.update_index)
+        self.coronal_view.vline.sig_position_changed.connect(self.transverse_view.update_index)
+        self.coronal_view.sig_index_changed.connect(self.volume_view.set_coronal_data)
 
-        self.trans_view.sig_index_changed.connect(self.sag_view.update_vline)
-        self.trans_view.sig_index_changed.connect(self.cor_view.update_vline)
-        self.trans_view.hline.sig_position_changed.connect(self.cor_view.update_index)
-        self.trans_view.vline.sig_position_changed.connect(self.sag_view.update_index)
+        self.transverse_view.sig_index_changed.connect(self.saggital_view.update_vline)
+        self.transverse_view.sig_index_changed.connect(self.coronal_view.update_vline)
+        self.transverse_view.hline.sig_position_changed.connect(self.coronal_view.update_index)
+        self.transverse_view.vline.sig_position_changed.connect(self.saggital_view.update_index)
+        self.transverse_view.sig_index_changed.connect(self.volume_view.set_transverse_data)
 
         # Connect scatter plot updates
-        self.panel.sig_roi_data_changed.connect(self.sag_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.cor_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.trans_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.vol_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.saggital_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.coronal_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.transverse_view.update_scatter)
+        self.panel.sig_roi_data_changed.connect(self.volume_view.update_scatter)
 
         marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
