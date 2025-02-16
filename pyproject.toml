@@ -28,7 +28,14 @@ classifiers = [
 keywords = ['neuroscience','anatomy', 'experiment', 'data analysis']
 dependencies = [
     'colorcet',
+    'h5py',
     'numpy',
+    'numpy-stl',
+    'pandas',
+    'pyopengl',
+    'pyqtgraph',
+    'PySide6',
+    'tables',
     'tifffile',
 ]
 requires-python = ">=3.6"

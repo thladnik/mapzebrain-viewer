@@ -532,8 +532,8 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
             # Set color and state on color picker button
             # color = cc.m_glasbey_bw(self.get_item_continuous_id(tree_item))[:3]
-            # color = cc.m_glasbey_hv(self.get_item_continuous_id(tree_item))[:3]
-            color = cc.m_glasbey_warm(self.get_item_continuous_id(tree_item))[:3]
+            color = cc.glasbey_hv[self.get_item_continuous_id(tree_item)][:3]
+            # color = cc.m_glasbey_warm(self.get_item_continuous_id(tree_item))[:3]
             color = [int(255 * c) for c in color]
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
             color_btn.setDisabled(True)
