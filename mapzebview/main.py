@@ -20,7 +20,15 @@ import tifffile
 import mapzebview
 from mapzebview import regions
 
+try:
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+except ImportError:
+    print('Matplotlib not installed. No pretty view export available')
+
+
 debug = False
+window: Window = None
 
 
 class SecionView(pg.ImageView):
@@ -33,8 +41,9 @@ class SecionView(pg.ImageView):
 
     def __init__(self, window: Window):
         level_mode = 'rgba' if debug else 'mono'
-        pg.ImageView.__init__(self, discreteTimeLine=True, levelMode=level_mode)
-        self.window = window
+        pg.ImageView.__init__(self, parent=window, discreteTimeLine=True, levelMode=level_mode)
+        # self.window = window
+        self.window()
 
         # Disable unnecessary UI
         self.ui.histogram.hide()
@@ -106,7 +115,7 @@ class SecionView(pg.ImageView):
             image_item.hide()
 
         # Update all
-        for i, (name, (region, _)) in enumerate(self.window.regions.items()):
+        for i, (name, (region, _)) in enumerate(self.window().regions.items()):
 
             image_item = self.region_image_items.get(name)
 
@@ -118,7 +127,7 @@ class SecionView(pg.ImageView):
                 self.region_image_items[name] = image_item
 
             # Set colormap
-            color = self.window.region_colors[name]
+            color = self.window().region_colors[name]
             cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], color], linearize=True)
             image_item.setColorMap(cmap)
             # image_item.setColorMap('CET-L14')
@@ -130,7 +139,7 @@ class SecionView(pg.ImageView):
     def update_scatter(self):
 
         # Skip if no points are set
-        if self.window.points is None:
+        if self.window().points is None:
             return
 
         data_slice = self.get_coordinate_slice()
@@ -158,59 +167,59 @@ class SecionView(pg.ImageView):
 class SaggitalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(self.window.marker_image[:, :, ::-1], axes={'t': 0, 'x': 1, 'y': 2, 'c': 3})
-        self.timeLine.setPos(self.window.marker_image.shape[0] // 2)
+        self.setImage(self.window().marker_image[:, :, ::-1], axes={'t': 0, 'x': 1, 'y': 2, 'c': 3})
+        self.timeLine.setPos(self.window().marker_image.shape[0] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return np.swapaxes(region[self.currentIndex, :, :], 0, 1)[::-1, :]
 
     def get_coordinate_slice(self) -> np.ndarray:
 
-        data_slice = self.window.points[self.window.points[:, 0].astype(int) == self.currentIndex, 1:]
-        data_slice[:, 1] = self.window.marker_image.shape[2] - data_slice[:, 1]
+        data_slice = self.window().points[self.window().points[:, 0].astype(int) == self.currentIndex, 1:]
+        data_slice[:, 1] = self.window().marker_image.shape[2] - data_slice[:, 1]
 
         return data_slice
 
     def ymax(self):
-        return self.window.marker_image.shape[2]
+        return self.window().marker_image.shape[2]
 
 
 class CoronalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(self.window.marker_image[::-1, :, :], axes={'t': 2, 'x': 1, 'y': 0, 'c': 3})
-        self.timeLine.setPos(self.window.marker_image.shape[2] // 2)
+        self.setImage(self.window().marker_image[::-1, :, :], axes={'t': 2, 'x': 1, 'y': 0, 'c': 3})
+        self.timeLine.setPos(self.window().marker_image.shape[2] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return region[::-1, :, self.currentIndex]
 
     def get_coordinate_slice(self) -> np.ndarray:
-        data_slice = self.window.points[self.window.points[:, 2].astype(int) == self.currentIndex, :2][:, ::-1]
+        data_slice = self.window().points[self.window().points[:, 2].astype(int) == self.currentIndex, :2][:, ::-1]
         data_slice[:, 1] = self.ymax() - data_slice[:, 1]
 
         return data_slice
 
     def ymax(self):
-        return self.window.marker_image.shape[0]
+        return self.window().marker_image.shape[0]
 
 
 class TransversalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(self.window.marker_image[:, :, ::-1], axes={'t': 1, 'x': 0, 'y': 2, 'c': 3})
-        self.timeLine.setPos(self.window.marker_image.shape[1] // 2)
+        self.setImage(self.window().marker_image[:, :, ::-1], axes={'t': 1, 'x': 0, 'y': 2, 'c': 3})
+        self.timeLine.setPos(self.window().marker_image.shape[1] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return np.swapaxes(region[:, self.currentIndex, :], 0, 1)[::-1, :]
 
     def get_coordinate_slice(self) -> np.ndarray:
-        data_slice = self.window.points[self.window.points[:, 1].astype(int) == self.currentIndex, ::2]
-        data_slice[:, 1] = self.window.marker_image.shape[2] - data_slice[:, 1]
+        data_slice = self.window().points[self.window().points[:, 1].astype(int) == self.currentIndex, ::2]
+        data_slice[:, 1] = self.window().marker_image.shape[2] - data_slice[:, 1]
 
         return data_slice
 
     def ymax(self):
-        return self.window.marker_image.shape[2]
+        return self.window().marker_image.shape[2]
 
 
 class MovableLine(pg.InfiniteLine):
@@ -260,8 +269,8 @@ class VolumeView(gl.GLViewWidget):
     volume_bounds: np.ndarray = None
 
     def __init__(self, window: Window):
-        gl.GLViewWidget.__init__(self)
-        self.window = window
+        gl.GLViewWidget.__init__(self, parent=window)
+        # self.window() = window
         self.opts['fov'] = 1.
 
         self.scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pxMode=False)
@@ -288,15 +297,15 @@ class VolumeView(gl.GLViewWidget):
 
     def marker_image_updated(self):
 
-        self.volume_bounds = np.array(self.window.marker_image.shape[:3], dtype=np.float32)
+        self.volume_bounds = np.array(self.window().marker_image.shape[:3], dtype=np.float32)
 
         # Set plane extents and position
-        self.set_saggital_data(self.window.marker_image.shape[0] // 2)
-        self.set_coronal_data(self.window.marker_image.shape[2] // 2)
-        self.set_transverse_data(self.window.marker_image.shape[1] // 2)
+        self.set_saggital_data(self.window().marker_image.shape[0] // 2)
+        self.set_coronal_data(self.window().marker_image.shape[2] // 2)
+        self.set_transverse_data(self.window().marker_image.shape[1] // 2)
 
         # Set camera
-        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in self.window.marker_image.shape[:3]]), distance=60000)
+        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in self.window().marker_image.shape[:3]]), distance=60000)
 
     def set_saggital_data(self, current_idx: int):
 
@@ -329,7 +338,7 @@ class VolumeView(gl.GLViewWidget):
                                                                faces=np.array([[0, 1, 2], [2, 3, 0]])))
 
     def update_scatter(self):
-        points = self.window.points
+        points = self.window().points
         points[:, 0] = self.volume_bounds[0] - points[:, 0]
         self.scatter_item.setData(pos=points)
         self.scatter_item.setData(color=(1., 1., 1., 0.1))
@@ -339,7 +348,7 @@ class VolumeView(gl.GLViewWidget):
         for mesh_item in self.mesh_items.values():
             mesh_item.hide()
 
-        for i, (name, (_, region_mesh)) in enumerate(self.window.regions.items()):
+        for i, (name, (_, region_mesh)) in enumerate(self.window().regions.items()):
 
             if name not in self.mesh_items:
                 vecs = region_mesh.vectors
@@ -351,7 +360,6 @@ class VolumeView(gl.GLViewWidget):
                 mesh_item.setGLOptions('additive')
 
                 self.addItem(mesh_item)
-
                 self.mesh_items[name] = mesh_item
 
             mesh_item = self.mesh_items[name]
@@ -360,8 +368,171 @@ class VolumeView(gl.GLViewWidget):
             mesh_item.show()
 
             # Set color
-            color = self.window.region_colors[name]
-            mesh_item.setColor((*[c / 255 for c in color[:3]], 0.2))
+            color = self.window().region_colors[name]
+            print(color.getRgbF())
+            mesh_item.setColor(color.getRgbF())
+
+
+class PrettyView(QtWidgets.QWidget):
+
+    ortho_views = {
+        'xy': (-90, 90),
+        'xz': (-90, 0),
+        'yz': (0, 0),
+        '-xy': (90, -90),
+        '-xz': (90, 0),
+        '-yz': (180, 0),
+    }
+
+    def __init__(self, parent):
+        QtWidgets.QWidget.__init__(self, parent)
+        self.setWindowFlag(QtCore.Qt.WindowType.Window)
+        self.setMinimumSize(1000, 600)
+        self.setLayout(QtWidgets.QHBoxLayout())
+
+        self.region_items: Dict[str, Poly3DCollection] = {}
+
+        # Add property tuner
+        self.property_tuner = QtWidgets.QGroupBox('Properties', self)
+        self.property_tuner.setMaximumWidth(250)
+        self.property_tuner.setLayout(QtWidgets.QVBoxLayout())
+        self.layout().addWidget(self.property_tuner)
+
+        self.view_selector = QtWidgets.QWidget()
+        self.view_selector.setLayout(QtWidgets.QHBoxLayout())
+        self.property_tuner.layout().addWidget(self.view_selector)
+        self.view_btns = []
+        for view in ['xy', 'xz', 'yz', '-xy', '-xz', '-yz']:
+            btn = QtWidgets.QPushButton(view)
+            btn.clicked.connect(self._get_set_view_fun(view))
+            self.view_btns.append(btn)
+            self.view_selector.layout().addWidget(btn)
+
+        # Save to file button
+        self.save_to_file_btn = QtWidgets.QPushButton('Save to file')
+        self.save_to_file_btn.clicked.connect(self.save_to_file)
+        self.property_tuner.layout().addWidget(self.save_to_file_btn)
+
+        # Add figure canvas
+        self.fig_canvas = FigureCanvasQTAgg()
+        self.ax = self.fig_canvas.figure.add_subplot(projection='3d')
+        self.ax.set_proj_type('ortho')
+        self.layout().addWidget(self.fig_canvas)
+
+        pos_marker_color = (200 / 255, 200 / 255, 100 / 255)
+        pos_marker_linewidth = 1.5
+
+        # Add lines
+        self.xline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
+        self.yline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
+        self.zline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
+
+        self.ax.axes.set_axis_off()
+        self.fig_canvas.figure.tight_layout()
+
+        # Show
+        self.show()
+
+        # Update view
+        self.update_current_position()
+        self.set_view('xz')
+        self.update_regions()
+
+    def showEvent(self, event, /):
+
+        # window.saggital_view.sig_index_changed.connect(self.update_current_position)
+        # window.coronal_view.sig_index_changed.connect(self.update_current_position)
+        # window.transverse_view.sig_index_changed.connect(self.update_current_position)
+        # window.sig_regions_updated.connect(self.update_regions)
+
+        event.accept()
+
+    def closeEvent(self, event, /):
+
+        # window.saggital_view.sig_index_changed.disconnect(self.update_current_position)
+        # window.coronal_view.sig_index_changed.disconnect(self.update_current_position)
+        # window.transverse_view.sig_index_changed.disconnect(self.update_current_position)
+        # window.sig_regions_updated.disconnect(self.update_regions)
+
+        event.accept()
+
+    def update_regions(self):
+
+        for name, (_, region_mesh) in window.regions.items():
+            if name not in self.region_items:
+                coll = Poly3DCollection(region_mesh.vectors, facecolors='black', edgecolors='none')
+                self.ax.add_collection3d(coll)
+                self.region_items[name] = coll
+
+            coll = self.region_items[name]
+            color = window.region_colors[name]
+            # color_vals = color.getRgbF()
+            # color_vals[3] = 1 - color_vals[3]
+            coll.set_facecolor(color.getRgbF())
+
+        self.fig_canvas.draw()
+
+    def update_current_position(self):
+
+        current_position = (window.saggital_view.currentIndex,
+                            window.transverse_view.currentIndex,
+                            window.coronal_view.currentIndex)
+
+        volume_shape = window.marker_image.shape[:3]
+
+        self.ax.set_box_aspect(volume_shape)
+
+        self.ax.set_xlim(current_position[0] - volume_shape[0] / 2, current_position[0] + volume_shape[0] / 2)
+        self.ax.set_ylim(current_position[1] - volume_shape[1] / 2, current_position[1] + volume_shape[1] / 2)
+        self.ax.set_zlim(current_position[2] - volume_shape[2] / 2, current_position[2] + volume_shape[2] / 2)
+
+        vol_half_range = np.array(volume_shape) / 2
+
+        xline = np.array([[current_position[0] - vol_half_range[0], current_position[1], current_position[2]],
+                          [current_position[0] + vol_half_range[0], current_position[1], current_position[2]]])
+
+        yline = np.array([[current_position[0], current_position[1] - vol_half_range[1], current_position[2]],
+                          [current_position[0], current_position[1] + vol_half_range[1], current_position[2]]])
+
+        zline = np.array([[current_position[0], current_position[1], current_position[2] - vol_half_range[2]],
+                          [current_position[0], current_position[1], current_position[2] + vol_half_range[2]]])
+
+        self.xline.set_data_3d(*xline.T)
+        self.yline.set_data_3d(*yline.T)
+        self.zline.set_data_3d(*zline.T)
+
+        self.fig_canvas.draw()
+
+    def _get_set_view_fun(self, view: str):
+
+        def _set_view():
+            return self.set_view(view=view)
+
+        return _set_view
+
+    def set_view(self, view: str = None, azim: float = None, elev: float = None):
+
+        if view is not None:
+            print(f'Set view to {view}')
+            azim = self.ortho_views[view][0]
+            elev = self.ortho_views[view][1]
+
+        if azim is None or elev is None:
+            raise ValueError('Azimuth and elevation need to be set')
+
+        self.ax.view_init(azim=azim, elev=elev)
+        self.fig_canvas.draw()
+
+    def add_dots(self):
+
+        self.ax.scatter(*np.random.normal(size=(3, 50)))
+        self.fig_canvas.draw()
+
+    def save_to_file(self):
+
+        # TODO: file selection dialog
+
+        self.fig_canvas.figure.savefig('test.png', dpi=300)
 
 
 class SearchSelectTreeWidget(QtWidgets.QWidget):
@@ -431,6 +602,7 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             # Add colorpicker button
             color_btn = QtWidgets.QPushButton(f' ')
             color_btn.setContentsMargins(0, 0, 0, 0)
+            color_btn.clicked.connect(lambda: self.open_colorpicker(tree_item))
             self.tree_widget.setItemWidget(tree_item, 2, color_btn)
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
             color_btn.setDisabled(True)
@@ -522,7 +694,7 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
         # Add item
         if tree_item not in self.selected_items:
-            print(f'Selected {tree_item}')
+            # print(f'Selected {tree_item}')
 
             self.selected_items.append(tree_item)
 
@@ -532,11 +704,11 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
 
             # Set color and state on color picker button
             # color = cc.m_glasbey_bw(self.get_item_continuous_id(tree_item))[:3]
-            color = cc.glasbey_hv[self.get_item_continuous_id(tree_item)][:3]
+            color = cc.glasbey_hv[self.get_item_continuous_id(tree_item)]
             # color = cc.m_glasbey_warm(self.get_item_continuous_id(tree_item))[:3]
-            color = [int(255 * c) for c in color]
+            color = QtGui.QColor.fromRgbF(*color, 0.1)
             color_btn = self.tree_widget.itemWidget(tree_item, 2)
-            color_btn.setDisabled(True)
+            color_btn.setDisabled(False)
 
             # Set color to item data
             self.set_item_color(tree_item, color)
@@ -562,16 +734,22 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
             self.selected_items.remove(tree_item)
             self.sig_item_removed.emit(tree_item)
 
+    def open_colorpicker(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        current_color = self.get_item_color(tree_item)
+
+        new_color = QtWidgets.QColorDialog().getColor(initial=current_color,
+                                                      options=QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel)
+
+        if new_color.isValid():
+            print(f'New color set for {self.get_item_name(tree_item)}')
+            self.set_item_color(tree_item, new_color)
+
     def update_colorpicker_button(self, tree_item: QtWidgets.QTreeWidgetItem):
 
         color = self.get_item_color(tree_item)
         color_btn = self.tree_widget.itemWidget(tree_item, 2)
-        color_btn.setStyleSheet(f'background-color: rgb{(*color,)};')
-
-    def set_item_color(self, tree_item: QtWidgets.QTreeWidgetItem, color: tuple):
-        tree_item.setData(0, self.ColorRole, color)
-
-        self.sig_item_color_changed.emit(tree_item)
+        color_btn.setStyleSheet(f'background-color: rgba{color.getRgb()};')
 
     def get_item_name(self, tree_item: QtWidgets.QTreeWidgetItem):
         return tree_item.data(0, self.UniqueNameRole)
@@ -579,8 +757,13 @@ class SearchSelectTreeWidget(QtWidgets.QWidget):
     def get_item_continuous_id(self, tree_item: QtWidgets.QTreeWidgetItem):
         return tree_item.data(0, self.ContinuousIdRole)
 
-    def get_item_color(self, tree_item: QtWidgets.QTreeWidgetItem):
+    def get_item_color(self, tree_item: QtWidgets.QTreeWidgetItem) -> QtGui.QColor:
         return tree_item.data(0, self.ColorRole)
+
+    def set_item_color(self, tree_item: QtWidgets.QTreeWidgetItem, color: QtGui.QColor):
+        tree_item.setData(0, self.ColorRole, color)
+
+        self.sig_item_color_changed.emit(tree_item)
 
 
 class RoiListWidget(QtWidgets.QGroupBox):
@@ -648,12 +831,14 @@ class RoiListWidget(QtWidgets.QGroupBox):
 
 class ControlPanel(QtWidgets.QGroupBox):
 
-    sig_region_color_changed = QtCore.Signal(str, list)
+    sig_region_color_changed = QtCore.Signal(str, QtGui.QColor)
     sig_roi_data_changed = QtCore.Signal()
+
+    pretty_view: PrettyView = None
 
     def __init__(self, window: Window):
         QtWidgets.QGroupBox.__init__(self, 'Navigation', parent=window)
-        self.window = window
+        # self.window = window
 
         self.setMinimumWidth(300)
         self.setMaximumWidth(400)
@@ -669,6 +854,18 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.roi_list = RoiListWidget()
         self.roi_list.sig_path_added.connect(self.roi_path_added)
         self.layout().addWidget(self.roi_list)
+
+        self.export_to_image_btn = QtWidgets.QPushButton('Export view to image')
+        self.export_to_image_btn.clicked.connect(self.open_pretty_view)
+        self.layout().addWidget(self.export_to_image_btn)
+
+    def open_pretty_view(self):
+
+        if self.pretty_view is not None:
+            self.pretty_view.close()
+
+        self.pretty_view = PrettyView(self)
+
 
     def roi_path_added(self, path: str):
         ext = path.split('.')[-1]
@@ -694,13 +891,18 @@ class ControlPanel(QtWidgets.QGroupBox):
         else:
             data = None
 
-        self.window.points = data
+        # Deal with NaNs
+        if np.any(np.isnan(data)):
+            print('WARNING: coordinates contain NaN values')
+            data = data[~np.any(np.isnan(data), axis=1), :]
+
+        self.window().points = data
 
         self.sig_roi_data_changed.emit()
 
     def region_selected(self, item: QtWidgets.QTreeWidgetItem):
         name = self.region_tree.get_item_name(item)
-        self.window.add_region(name)
+        self.window().add_region(name)
 
     def region_color_changed(self, item: QtWidgets.QTreeWidgetItem):
         name = self.region_tree.get_item_name(item)
@@ -710,7 +912,7 @@ class ControlPanel(QtWidgets.QGroupBox):
 
     def region_removed(self, item: QtWidgets.QTreeWidgetItem):
         name = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
-        self.window.remove_region(name)
+        self.window().remove_region(name)
 
 
 class Window(QtWidgets.QMainWindow):
@@ -718,7 +920,7 @@ class Window(QtWidgets.QMainWindow):
     points: Union[List[float], np.ndarray] = None
     marker_image: np.ndarray = None
     regions: Dict[str, Tuple[np.ndarray, Union[None, stl.Mesh]]] = {}
-    region_colors: Dict[str, list] = {}
+    region_colors: Dict[str, QtGui.QColor] = {}
 
     sig_regions_updated = QtCore.Signal()
     sig_marker_image_updated = QtCore.Signal()
@@ -729,8 +931,8 @@ class Window(QtWidgets.QMainWindow):
                  regions: List[str] = None):
         QtWidgets.QMainWindow.__init__(self)
         self.resize(1600, 800)
-        self.show()
         self.setWindowTitle('MapZeBrain Viewer')
+        self.show()
 
         # TODO: handle loading of coordinate data uniformly
         if isinstance(points, pd.DataFrame):
@@ -822,6 +1024,7 @@ class Window(QtWidgets.QMainWindow):
         if regions is not None:
             for r in regions:
                 self.panel.region_tree.select_exact_match_in_tree(r)
+
 
     def marker_path(self):
         path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'markers')
@@ -933,13 +1136,14 @@ class Window(QtWidgets.QMainWindow):
         except urllib.request.HTTPError as _:
             print('WARNING: Failed to load region mesh data')
 
-    def update_region_color(self, name: str, color: Union[list, tuple]):
-        self.region_colors[name] = [*color,]
+    def update_region_color(self, name: str, color: QtGui.QColor):
+        self.region_colors[name] = color
 
         self.sig_regions_updated.emit()
 
 
 def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: List[str] = None):
+    global window
 
     print('Open window')
 
@@ -948,7 +1152,7 @@ def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: Lis
 
     app = pg.mkQApp()
 
-    win = Window(points=points, marker=marker, regions=regions)
+    window = Window(points=points, marker=marker, regions=regions)
 
     pg.exec()
 
