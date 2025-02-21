@@ -260,82 +260,82 @@ class VerticalLine(MovableLine):
 class VolumeView(gl.GLViewWidget):
 
     mesh_items: Dict[str, gl.GLMeshItem] = {}
-    sag_plane_mesh_item: gl.GLMeshItem = None
-
-    sag_plane_verts = np.array([[0.5, 0, 0], [0.5, 1, 0], [0.5, 1, 1], [0.5, 0, 1]], dtype=np.float32)
-    cor_plane_verts = np.array([[0, 0, 0.0], [1, 0, 0.5], [1, 1, 0.5], [0, 1, 0.5]], dtype=np.float32)
-    trans_plane_verts = np.array([[0, 0.5, 0], [1, 0.5, 0], [1, 0.5, 1], [0, 0.5, 1]], dtype=np.float32)
 
     volume_bounds: np.ndarray = None
+    plane_color = np.array([200, 200, 100, 5])
+    plane_thickness = 3
 
     def __init__(self, window: Window):
         gl.GLViewWidget.__init__(self, parent=window)
-        # self.window() = window
         self.opts['fov'] = 1.
 
         self.scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pxMode=False)
         self.scatter_item .setGLOptions('additive')
         self.addItem(self.scatter_item)
 
-        sag_plane_data = gl.MeshData(vertexes=self.sag_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
-        self.saggital_plane = gl.GLMeshItem(meshdata=sag_plane_data, smooth=True, shader='balloon')
-        self.saggital_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        sag_data = np.ones((3, 100, 100, 4)) * self.plane_color[None, None, None, :]
+        self.saggital_plane = gl.GLVolumeItem(sag_data)
         self.saggital_plane.setGLOptions('additive')
         self.addItem(self.saggital_plane)
 
-        cor_plane_data = gl.MeshData(vertexes=self.cor_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
-        self.coronal_plane = gl.GLMeshItem(meshdata=cor_plane_data, smooth=True, shader='balloon')
-        self.coronal_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        cor_data = np.ones((100, 100, 3, 4)) * self.plane_color[None, None, None, :]
+        self.coronal_plane = gl.GLVolumeItem(cor_data)
         self.coronal_plane.setGLOptions('additive')
         self.addItem(self.coronal_plane)
 
-        trans_plane_data = gl.MeshData(vertexes=self.trans_plane_verts, faces=np.array([[0, 1, 2], [2, 3, 0]]))
-        self.transverse_plane = gl.GLMeshItem(meshdata=trans_plane_data, smooth=True, shader='balloon')
-        self.transverse_plane.setColor((200 / 255, 200 / 255, 100 / 255, 0.05))
+        trans_data = np.ones((100, 3, 100, 4)) * self.plane_color[None, None, None, :]
+        self.transverse_plane = gl.GLVolumeItem(trans_data)
         self.transverse_plane.setGLOptions('additive')
         self.addItem(self.transverse_plane)
 
     def marker_image_updated(self):
 
-        self.volume_bounds = np.array(self.window().marker_image.shape[:3], dtype=np.float32)
+        volume_shape = self.window().marker_image.shape[:3]
 
-        # Set plane extents and position
-        self.set_saggital_data(self.window().marker_image.shape[0] // 2)
-        self.set_coronal_data(self.window().marker_image.shape[2] // 2)
-        self.set_transverse_data(self.window().marker_image.shape[1] // 2)
+        self.volume_bounds = np.array(volume_shape, dtype=np.float32)
+
+        # Set plane extents
+        sag_data = (np.ones((self.plane_thickness, volume_shape[1], volume_shape[2], 4)) * self.plane_color[None, None, None, :]).astype(np.uint8)
+        self.saggital_plane.setData(sag_data)
+
+        cor_data = (np.ones((volume_shape[0], volume_shape[1], self.plane_thickness, 4)) * self.plane_color[None, None, None, :]).astype(np.uint8)
+        self.coronal_plane.setData(cor_data)
+
+        trans_data = np.ones((volume_shape[0], self.plane_thickness, volume_shape[2], 4))
+        trans_data *= self.plane_color[None, None, None, :]
+        self.transverse_plane.setData(trans_data)
+
+        # Translate
+        self.set_saggital_position(self.window().marker_image.shape[0] // 2)
+        self.set_coronal_position(self.window().marker_image.shape[2] // 2)
+        self.set_transverse_position(self.window().marker_image.shape[1] // 2)
 
         # Set camera
         self.setCameraPosition(pos=Vector(*[int(i // 2) for i in self.window().marker_image.shape[:3]]), distance=60000)
 
-    def set_saggital_data(self, current_idx: int):
+    def set_saggital_position(self, current_idx: int):
 
         if self.volume_bounds is None:
             return
 
-        vertices = self.sag_plane_verts * self.volume_bounds[None, :]
-        vertices[:, 0] = self.volume_bounds[0] - current_idx
-        self.saggital_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
-                                                             faces=np.array([[0, 1, 2], [2, 3, 0]])))
+        self.saggital_plane.resetTransform()
+        self.saggital_plane.translate(self.volume_bounds[0]-current_idx, 0, 0)
 
-    def set_coronal_data(self, current_idx: int):
+    def set_coronal_position(self, current_idx: int):
 
         if self.volume_bounds is None:
             return
 
-        vertices = self.cor_plane_verts * self.volume_bounds[None, :]
-        vertices[:, 2] = current_idx
-        self.coronal_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
-                                                            faces=np.array([[0, 1, 2], [2, 3, 0]])))
+        self.coronal_plane.resetTransform()
+        self.coronal_plane.translate(0, 0, current_idx)
 
-    def set_transverse_data(self, current_idx: int):
+    def set_transverse_position(self, current_idx: int):
 
         if self.volume_bounds is None:
             return
 
-        vertices = self.trans_plane_verts * self.volume_bounds[None, :]
-        vertices[:, 1] = current_idx
-        self.transverse_plane.setMeshData(meshdata=gl.MeshData(vertexes=vertices,
-                                                               faces=np.array([[0, 1, 2], [2, 3, 0]])))
+        self.transverse_plane.resetTransform()
+        self.transverse_plane.translate(0, current_idx, 0)
 
     def update_scatter(self):
         points = self.window().points
@@ -369,7 +369,6 @@ class VolumeView(gl.GLViewWidget):
 
             # Set color
             color = self.window().region_colors[name]
-            print(color.getRgbF())
             mesh_item.setColor(color.getRgbF())
 
 
@@ -398,15 +397,18 @@ class PrettyView(QtWidgets.QWidget):
         self.property_tuner.setLayout(QtWidgets.QVBoxLayout())
         self.layout().addWidget(self.property_tuner)
 
+        self.property_tuner.layout().addWidget(QtWidgets.QLabel('Set orthogonal view'))
         self.view_selector = QtWidgets.QWidget()
         self.view_selector.setLayout(QtWidgets.QHBoxLayout())
         self.property_tuner.layout().addWidget(self.view_selector)
         self.view_btns = []
         for view in ['xy', 'xz', 'yz', '-xy', '-xz', '-yz']:
-            btn = QtWidgets.QPushButton(view)
+            btn = QtWidgets.QPushButton(view.upper())
             btn.clicked.connect(self._get_set_view_fun(view))
             self.view_btns.append(btn)
             self.view_selector.layout().addWidget(btn)
+
+        self.property_tuner.layout().addStretch()
 
         # Save to file button
         self.save_to_file_btn = QtWidgets.QPushButton('Save to file')
@@ -434,8 +436,9 @@ class PrettyView(QtWidgets.QWidget):
         self.show()
 
         # Update view
+        camera_params = window.volume_view.cameraParams()
         self.update_current_position()
-        self.set_view('xz')
+        self.set_view(azim=camera_params['azimuth'], elev=camera_params['elevation'])
         self.update_regions()
 
     def showEvent(self, event, /):
@@ -466,8 +469,6 @@ class PrettyView(QtWidgets.QWidget):
 
             coll = self.region_items[name]
             color = window.region_colors[name]
-            # color_vals = color.getRgbF()
-            # color_vals[3] = 1 - color_vals[3]
             coll.set_facecolor(color.getRgbF())
 
         self.fig_canvas.draw()
@@ -488,14 +489,14 @@ class PrettyView(QtWidgets.QWidget):
 
         vol_half_range = np.array(volume_shape) / 2
 
-        xline = np.array([[current_position[0] - vol_half_range[0], current_position[1], current_position[2]],
-                          [current_position[0] + vol_half_range[0], current_position[1], current_position[2]]])
+        xline = np.array([[volume_shape[0] - current_position[0] - vol_half_range[0], current_position[1], current_position[2]],
+                          [volume_shape[0] - current_position[0] + vol_half_range[0], current_position[1], current_position[2]]])
 
-        yline = np.array([[current_position[0], current_position[1] - vol_half_range[1], current_position[2]],
-                          [current_position[0], current_position[1] + vol_half_range[1], current_position[2]]])
+        yline = np.array([[volume_shape[0] - current_position[0], current_position[1] - vol_half_range[1], current_position[2]],
+                          [volume_shape[0] - current_position[0], current_position[1] + vol_half_range[1], current_position[2]]])
 
-        zline = np.array([[current_position[0], current_position[1], current_position[2] - vol_half_range[2]],
-                          [current_position[0], current_position[1], current_position[2] + vol_half_range[2]]])
+        zline = np.array([[volume_shape[0] - current_position[0], current_position[1], current_position[2] - vol_half_range[2]],
+                          [volume_shape[0] - current_position[0], current_position[1], current_position[2] + vol_half_range[2]]])
 
         self.xline.set_data_3d(*xline.T)
         self.yline.set_data_3d(*yline.T)
@@ -982,19 +983,19 @@ class Window(QtWidgets.QMainWindow):
         self.saggital_view.sig_index_changed.connect(self.transverse_view.update_vline)
         self.saggital_view.hline.sig_position_changed.connect(self.coronal_view.update_index)
         self.saggital_view.vline.sig_position_changed.connect(self.transverse_view.update_index)
-        self.saggital_view.sig_index_changed.connect(self.volume_view.set_saggital_data)
+        self.saggital_view.sig_index_changed.connect(self.volume_view.set_saggital_position)
 
         self.coronal_view.sig_index_changed.connect(self.saggital_view.update_hline)
         self.coronal_view.sig_index_changed.connect(self.transverse_view.update_hline)
         self.coronal_view.hline.sig_position_changed.connect(self.saggital_view.update_index)
         self.coronal_view.vline.sig_position_changed.connect(self.transverse_view.update_index)
-        self.coronal_view.sig_index_changed.connect(self.volume_view.set_coronal_data)
+        self.coronal_view.sig_index_changed.connect(self.volume_view.set_coronal_position)
 
         self.transverse_view.sig_index_changed.connect(self.saggital_view.update_vline)
         self.transverse_view.sig_index_changed.connect(self.coronal_view.update_vline)
         self.transverse_view.hline.sig_position_changed.connect(self.coronal_view.update_index)
         self.transverse_view.vline.sig_position_changed.connect(self.saggital_view.update_index)
-        self.transverse_view.sig_index_changed.connect(self.volume_view.set_transverse_data)
+        self.transverse_view.sig_index_changed.connect(self.volume_view.set_transverse_position)
 
         # Connect scatter plot updates
         self.panel.sig_roi_data_changed.connect(self.saggital_view.update_scatter)
