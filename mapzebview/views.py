@@ -83,7 +83,7 @@ class SecionView(pg.ImageView):
             image_item.hide()
 
         # Update all
-        for i, (name, (region, _)) in enumerate(config.window.regions.items()):
+        for i, (name, (region, _)) in enumerate(config.regions.items()):
 
             image_item = self.region_image_items.get(name)
 
@@ -95,7 +95,7 @@ class SecionView(pg.ImageView):
                 self.region_image_items[name] = image_item
 
             # Set colormap
-            color = config.window.region_colors[name]
+            color = config.region_colors[name]
             cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], color], linearize=True)
             image_item.setColorMap(cmap)
             # image_item.setColorMap('CET-L14')
@@ -163,8 +163,8 @@ class SecionView(pg.ImageView):
 class SaggitalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(config.window.marker_image[:, :, ::-1], axes={'t': 0, 'x': 1, 'y': 2, 'c': 3})
-        self.timeLine.setPos(config.window.marker_image.shape[0] // 2)
+        self.setImage(config.marker_image[:, :, ::-1], axes={'t': 0, 'x': 1, 'y': 2, 'c': 3})
+        self.timeLine.setPos(config.marker_image.shape[0] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return np.swapaxes(region[self.currentIndex, :, :], 0, 1)[::-1, :]
@@ -172,19 +172,19 @@ class SaggitalView(SecionView):
     def get_coordinate_slice(self, points: np.ndarray) -> np.ndarray:
 
         data_slice = points[points[:, 0].astype(int) == self.currentIndex, 1:]
-        data_slice[:, 1] = config.window.marker_image.shape[2] - data_slice[:, 1]
+        data_slice[:, 1] = config.marker_image.shape[2] - data_slice[:, 1]
 
         return data_slice
 
     def ymax(self):
-        return config.window.marker_image.shape[2]
+        return config.marker_image.shape[2]
 
 
 class CoronalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(config.window.marker_image[::-1, :, :], axes={'t': 2, 'x': 1, 'y': 0, 'c': 3})
-        self.timeLine.setPos(config.window.marker_image.shape[2] // 2)
+        self.setImage(config.marker_image[::-1, :, :], axes={'t': 2, 'x': 1, 'y': 0, 'c': 3})
+        self.timeLine.setPos(config.marker_image.shape[2] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return region[::-1, :, self.currentIndex]
@@ -197,14 +197,14 @@ class CoronalView(SecionView):
         return data_slice
 
     def ymax(self):
-        return config.window.marker_image.shape[0]
+        return config.marker_image.shape[0]
 
 
 class TransversalView(SecionView):
 
     def update_marker_image(self):
-        self.setImage(config.window.marker_image[:, :, ::-1], axes={'t': 1, 'x': 0, 'y': 2, 'c': 3})
-        self.timeLine.setPos(config.window.marker_image.shape[1] // 2)
+        self.setImage(config.marker_image[:, :, ::-1], axes={'t': 1, 'x': 0, 'y': 2, 'c': 3})
+        self.timeLine.setPos(config.marker_image.shape[1] // 2)
 
     def get_region_slice(self, region: np.ndarray):
         return np.swapaxes(region[:, self.currentIndex, :], 0, 1)[::-1, :]
@@ -212,12 +212,12 @@ class TransversalView(SecionView):
     def get_coordinate_slice(self, points: np.ndarray) -> np.ndarray:
 
         data_slice = points[points[:, 1].astype(int) == self.currentIndex, ::2]
-        data_slice[:, 1] = config.window.marker_image.shape[2] - data_slice[:, 1]
+        data_slice[:, 1] = config.marker_image.shape[2] - data_slice[:, 1]
 
         return data_slice
 
     def ymax(self):
-        return config.window.marker_image.shape[2]
+        return config.marker_image.shape[2]
 
 
 class MovableLine(pg.InfiniteLine):
@@ -285,7 +285,7 @@ class VolumeView(gl.GLViewWidget):
 
     def marker_image_updated(self):
 
-        volume_shape = config.window.marker_image.shape[:3]
+        volume_shape = config.marker_image.shape[:3]
 
         self.volume_bounds = np.array(volume_shape, dtype=np.float32)
 
@@ -301,12 +301,12 @@ class VolumeView(gl.GLViewWidget):
         self.transverse_plane.setData(trans_data)
 
         # Translate
-        self.set_saggital_position(config.window.marker_image.shape[0] // 2)
-        self.set_coronal_position(config.window.marker_image.shape[2] // 2)
-        self.set_transverse_position(config.window.marker_image.shape[1] // 2)
+        self.set_saggital_position(config.marker_image.shape[0] // 2)
+        self.set_coronal_position(config.marker_image.shape[2] // 2)
+        self.set_transverse_position(config.marker_image.shape[1] // 2)
 
         # Set camera
-        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in config.window.marker_image.shape[:3]]), distance=60000)
+        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in config.marker_image.shape[:3]]), distance=60000)
 
     def set_saggital_position(self, current_idx: int):
 
@@ -344,7 +344,7 @@ class VolumeView(gl.GLViewWidget):
 
         scatter_item = self.scatter_items[name]
 
-        points = tree_item.coordinates
+        points = tree_item.coordinates.copy()
         points[:, 0] = self.volume_bounds[0] - points[:, 0]
         scatter_item.setData(pos=points, color=tree_item.color.getRgbF())
 
@@ -367,7 +367,7 @@ class VolumeView(gl.GLViewWidget):
         for mesh_item in self.mesh_items.values():
             mesh_item.hide()
 
-        for i, (name, (_, region_mesh)) in enumerate(config.window.regions.items()):
+        for i, (name, (_, region_mesh)) in enumerate(config.regions.items()):
 
             if name not in self.mesh_items:
                 vecs = region_mesh.vectors
@@ -387,7 +387,7 @@ class VolumeView(gl.GLViewWidget):
             mesh_item.show()
 
             # Set color
-            color = config.window.region_colors[name].getRgbF()
+            color = config.region_colors[name].getRgbF()
 
             # Reduce alpha for volume view
             mesh_item.setColor((*color[:3], color[3] / 10))
@@ -442,7 +442,8 @@ class PrettyView(QtWidgets.QWidget):
         self.ax.set_proj_type('ortho')
         self.layout().addWidget(self.fig_canvas)
 
-        pos_marker_color = (200 / 255, 200 / 255, 100 / 255)
+        # pos_marker_color = (200 / 255, 200 / 255, 100 / 255)
+        pos_marker_color = (0 / 255, 0 / 255, 0 / 255)
         pos_marker_linewidth = 1.5
 
         # Add lines
@@ -464,14 +465,14 @@ class PrettyView(QtWidgets.QWidget):
 
     def update_regions(self):
 
-        for name, (_, region_mesh) in config.window.regions.items():
+        for name, (_, region_mesh) in config.regions.items():
             if name not in self.region_items:
                 coll = Poly3DCollection(region_mesh.vectors, facecolors='black', edgecolors='none')
                 self.ax.add_collection3d(coll)
                 self.region_items[name] = coll
 
             coll = self.region_items[name]
-            color = config.window.region_colors[name].getRgbF()
+            color = config.region_colors[name].getRgbF()
 
             # Set to lower alpha value
             coll.set_facecolor((*color[:3], color[3] / 10))
@@ -484,7 +485,7 @@ class PrettyView(QtWidgets.QWidget):
                             config.window.transverse_view.currentIndex,
                             config.window.coronal_view.currentIndex)
 
-        volume_shape = config.window.marker_image.shape[:3]
+        volume_shape = config.marker_image.shape[:3]
 
         self.ax.set_box_aspect(volume_shape)
 

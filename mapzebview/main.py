@@ -14,8 +14,8 @@ import stl
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import tifffile
 
-from mapzebview import config, regions
-import mapzebview
+from mapzebview import config
+from mapzebview.regions import region_structure
 from mapzebview.views import CoronalView, PrettyView, SaggitalView, TransversalView, VolumeView
 
 try:
@@ -27,28 +27,17 @@ except ImportError:
 
 class Window(QtWidgets.QMainWindow):
 
-    points: Union[List[float], np.ndarray] = None
-    marker_image: np.ndarray = None
-    regions: Dict[str, Tuple[np.ndarray, Union[None, stl.Mesh]]] = {}
-    region_colors: Dict[str, QtGui.QColor] = {}
-
     sig_regions_updated = QtCore.Signal()
     sig_marker_image_updated = QtCore.Signal()
 
     def __init__(self,
-                 points: Union[List[float], np.ndarray] = None,
                  marker: str = None,
-                 regions: List[str] = None):
+                 regions: List[str] = None,
+                 rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None):
         QtWidgets.QMainWindow.__init__(self)
         self.resize(1600, 800)
         self.setWindowTitle('MapZeBrain Viewer')
         config.window = self
-
-        # TODO: handle loading of coordinate data uniformly
-        if isinstance(points, pd.DataFrame):
-            points = points.values
-
-        self.points = points
 
         self.wdgt = QtWidgets.QWidget()
         self.setCentralWidget(self.wdgt)
@@ -135,7 +124,7 @@ class Window(QtWidgets.QMainWindow):
         self.panel.roi_list.sig_item_removed.connect(self.volume_view.remove_scatter)
         self.panel.roi_list.sig_item_hidden.connect(self.volume_view.remove_scatter)
 
-        marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
+        marker_catalog_path = os.path.join(config.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
             print('Get marker catalog from MapZeBrain')
             urllib.request.urlretrieve('https://api.mapzebrain.org/media/downloads/Lines/markers_catalog.json',
@@ -158,24 +147,22 @@ class Window(QtWidgets.QMainWindow):
             for r in regions:
                 self.panel.region_tree.select_exact_match_in_tree(r)
 
+        # If ROIs are pre-set, add those
+        if rois is not None:
+            if isinstance(rois, (np.ndarray, pd.DataFrame)):
+                rois = {None: rois}
+
+            for name, data in rois.items():
+                self.panel.roi_list.add_roi_set(data=data, name=name)
+
         # Show
         self.show()
-
-    def marker_path(self):
-        path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'markers')
-
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-        return path
 
     def set_marker(self, name: str):
 
         if not config.debug:
             print(f'Set marker to {name}')
-            self.marker_image = self.load_marker(name)
-            # path = f'../../ants_registration/ants_registration/mapzebrain/{name}.tif'
-            # self.marker_image = np.swapaxes(np.moveaxis(tifffile.imread(path), 0, 2), 0, 1)[:,:,:,None]
+            config.marker_image = self.load_marker(name)
 
         else:
             # Debug image:
@@ -184,7 +171,7 @@ class Window(QtWidgets.QMainWindow):
             im[:, :350, :, 1] += 80
             im[:, :, :100, 2] += 80
 
-            self.marker_image = im
+            config.marker_image = im
 
         self.sig_marker_image_updated.emit()
 
@@ -193,7 +180,7 @@ class Window(QtWidgets.QMainWindow):
         # Get file name from URL
         file_name = self.marker_structure[name].split('/')[-1].split('.')[0]
 
-        file_path = os.path.join(self.marker_path(), f'{file_name}.tif')
+        file_path = os.path.join(config.marker_path(), f'{file_name}.tif')
         print(f'Load marker line {name} from {file_path}')
         if not os.path.exists(file_path):
             self.download_marker(name)
@@ -203,29 +190,21 @@ class Window(QtWidgets.QMainWindow):
     def download_marker(self, name: str):
 
         url = self.marker_structure[name]
-        zip_path = os.path.join(self.marker_path(), f'{name}.zip')
+        zip_path = os.path.join(config.marker_path(), f'{name}.zip')
         print(f'Download marker data for {name} from {url}')
         urllib.request.urlretrieve(url, zip_path)
 
         # Extract
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(self.marker_path())
+            zip_ref.extractall(config.marker_path())
 
         # Remove ZIP
         os.remove(zip_path)
 
-    def region_path(self) -> str:
-        path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'regions')
-
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-        return path
-
     def add_region(self, name: str):
         print(f'Add region {name}')
 
-        self.regions[name] = self.load_region(name)
+        config.regions[name] = self.load_region(name)
 
         print(f'Region {name} added')
         self.sig_regions_updated.emit()
@@ -233,15 +212,15 @@ class Window(QtWidgets.QMainWindow):
     def remove_region(self, name: str):
         print(f'Remove region {name}')
 
-        if name in self.regions:
-            del self.regions[name]
+        if name in config.regions:
+            del config.regions[name]
 
         self.sig_regions_updated.emit()
 
     def load_region(self, name: str) -> Tuple[np.ndarray, stl.Mesh]:
 
         name_str = name.replace(' ', '_')
-        file_path = os.path.join(self.region_path(), f'{name_str}.tif')
+        file_path = os.path.join(config.region_path(), f'{name_str}.tif')
         print(f'Load region volume {file_path}')
 
         if not os.path.exists(file_path):
@@ -250,7 +229,7 @@ class Window(QtWidgets.QMainWindow):
         im = np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)
 
         try:
-            path_stl = os.path.join(self.region_path(), f'{name_str}.stl')
+            path_stl = os.path.join(config.region_path(), f'{name_str}.stl')
             print(f'Load region mesh {path_stl}')
             mesh = stl.Mesh.from_file(path_stl)
         except FileNotFoundError as e:
@@ -259,22 +238,23 @@ class Window(QtWidgets.QMainWindow):
 
         return im, mesh
 
-    def download_region(self, name_str: str):
+    @staticmethod
+    def download_region(name_str: str):
 
         url = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.tif'
         print(f'Download region data for {name_str} from {url}')
-        urllib.request.urlretrieve(url, os.path.join(self.region_path(), f'{name_str}.tif'))
+        urllib.request.urlretrieve(url, os.path.join(config.region_path(), f'{name_str}.tif'))
 
         try:
             url_stl = f'https://api.mapzebrain.org/media/Regions/v2.0.1/{name_str}/{name_str}.stl'
             print(f'Download region mesh data for {name_str} from {url_stl}')
-            urllib.request.urlretrieve(url_stl, os.path.join(self.region_path(), f'{name_str}.stl'))
+            urllib.request.urlretrieve(url_stl, os.path.join(config.region_path(), f'{name_str}.stl'))
 
         except urllib.request.HTTPError as _:
             print('WARNING: Failed to load region mesh data')
 
     def update_region_color(self, name: str, color: QtGui.QColor):
-        self.region_colors[name] = color
+        config.region_colors[name] = color
 
         self.sig_regions_updated.emit()
 
@@ -294,7 +274,7 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.setLayout(QtWidgets.QVBoxLayout())
 
         self.region_tree = RegionTreeWidget()
-        self.region_tree.build_tree(regions.structure)
+        self.region_tree.build_tree(region_structure)
         self.region_tree.sig_item_selected.connect(self.region_selected)
         self.region_tree.sig_item_removed.connect(self.region_removed)
         self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
@@ -654,36 +634,43 @@ class RoiWidget(QtWidgets.QGroupBox):
         ext = path.split('.')[-1]
 
         if ext in ['h5', 'hdf5']:
-            df: pd.DataFrame = pd.read_hdf(path)
-            keys = []
-            for _n in ['x', 'y', 'z']:
-                _keys = [k for k in df.keys() if _n in k]
-                if len(_keys) > 0:
-                    keys.append(_keys[0])
-
-            if len(keys) == 0:
-                raise KeyError('No matching coordinate keys found for x/y/z')
-
-            print(f'Found coordinate keys: {keys}')
-
-            data = df[keys].values
+            data = pd.read_hdf(path)
 
         elif ext == 'npy':
             data = np.load(path)
 
         else:
-            data = None
             return
+
+        self.add_roi_set(data, name=path)
+
+    def add_roi_set(self, data: Union[np.ndarray, pd.DataFrame], name: str = None):
+
+        # Unpack DataFrames
+        if isinstance(data, pd.DataFrame):
+
+            if len(data.columns) == 3:
+                keys = data.columns
+
+            else:
+                keys = []
+                for _n in ['x', 'y', 'z']:
+                    _keys = [k for k in data.keys() if _n in k]
+                    if len(_keys) > 0:
+                        keys.append(_keys[0])
+
+                if len(keys) == 0:
+                    raise KeyError('No matching coordinate keys found for x/y/z')
+
+            data = data[keys].values
+            print(f'Found coordinate keys: {keys}')
 
         # Deal with NaNs
         if np.any(np.isnan(data)):
             print('WARNING: coordinates contain NaN values')
             data = data[~np.any(np.isnan(data), axis=1), :]
 
-        self.add_roi_set(data, name=path)
-
-    def add_roi_set(self, data: np.ndarray, name: str = None):
-
+        # Set name if none given
         if name is None:
             name = f'ROI set {self.item_count}'
             self.item_count += 1
@@ -786,7 +773,7 @@ class RoiWidget(QtWidgets.QGroupBox):
             color_btn.setStyleSheet('')
 
 
-def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: List[str] = None):
+def run(rois: Union[List, np.ndarray] = None, marker: str = None, regions: List[str] = None):
 
     print('Open window')
 
@@ -795,7 +782,7 @@ def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: Lis
 
     app = pg.mkQApp()
 
-    win = Window(points=points, marker=marker, regions=regions)
+    win = Window(rois=rois, marker=marker, regions=regions)
 
     pg.exec()
 

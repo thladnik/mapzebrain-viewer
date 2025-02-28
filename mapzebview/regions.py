@@ -1,5 +1,5 @@
 
-structure = {
+region_structure = {
     'prosencephalon (forebrain)': {
         'telencephalon': {
             'olfactory bulb': 2.0,
