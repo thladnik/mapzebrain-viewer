@@ -542,7 +542,6 @@ class RegionTreeWidget(QtWidgets.QWidget):
 class RoiWidget(QtWidgets.QGroupBox):
 
     sig_path_added = QtCore.Signal(str)
-    sig_roi_data_loaded = QtCore.Signal(np.ndarray)
     sig_item_shown = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_hidden = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
@@ -575,10 +574,9 @@ class RoiWidget(QtWidgets.QGroupBox):
         self.tree_widget.header().resizeSection(2, 25)
         self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
         self.tree_widget.header().setStretchLastSection(False)
-        self.sig_roi_data_loaded.connect(self.add_roi_set)
         self.layout().addWidget(self.tree_widget)
 
-        self.sig_path_added.connect(self.load_roi_data)
+        self.sig_path_added.connect(self.add_roi_set)
         self.sig_item_shown.connect(self.update_color_btn)
         self.sig_item_hidden.connect(self.update_color_btn)
         self.sig_item_color_changed.connect(self.update_color_btn)
@@ -629,7 +627,7 @@ class RoiWidget(QtWidgets.QGroupBox):
 
         QtWidgets.QGroupBox.keyPressEvent(self, event)
 
-    def load_roi_data(self, path: str):
+    def load_roi_data(self, path: Union[str, os.PathLike]):
 
         ext = path.split('.')[-1]
 
@@ -642,9 +640,19 @@ class RoiWidget(QtWidgets.QGroupBox):
         else:
             return
 
-        self.add_roi_set(data, name=path)
+        return data
 
-    def add_roi_set(self, data: Union[np.ndarray, pd.DataFrame], name: str = None):
+    def add_roi_set(self, data: Union[np.ndarray, pd.DataFrame, str, os.PathLike], name: str = None):
+
+        # Load data from path
+        if isinstance(data, (str, os.PathLike)):
+            if name is None:
+                name = data
+
+            data = self.load_roi_data(data)
+
+        if data is None:
+            return
 
         # Unpack DataFrames
         if isinstance(data, pd.DataFrame):
