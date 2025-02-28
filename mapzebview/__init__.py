@@ -11,5 +11,3 @@ __email__ = 'tim.github@hladnik.de'
 __status__ = 'Development'
 
 __all__ = ['run']
-
-default_marker_name = 'jf5Tg'

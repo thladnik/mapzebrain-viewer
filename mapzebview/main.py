@@ -4,916 +4,25 @@ import json
 import os
 import urllib.request
 import zipfile
-from abc import abstractmethod
 from typing import Dict, List, Tuple, Union
 
 import colorcet as cc
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-import pyqtgraph.opengl as gl
 import stl
-from pyqtgraph import Vector
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import tifffile
 
+from mapzebview import config, regions
 import mapzebview
-from mapzebview import regions
+from mapzebview.views import CoronalView, PrettyView, SaggitalView, TransversalView, VolumeView
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 except ImportError:
     print('Matplotlib not installed. No pretty view export available')
-
-
-debug = False
-window: Window = None
-
-
-class SecionView(pg.ImageView):
-
-    direction_label: str = None
-
-    sig_index_changed = QtCore.Signal(int)
-
-    last_idx: int = -1
-
-    def __init__(self, window: Window):
-        level_mode = 'rgba' if debug else 'mono'
-        pg.ImageView.__init__(self, parent=window, discreteTimeLine=True, levelMode=level_mode)
-        # self.window = window
-        self.window()
-
-        # Disable unnecessary UI
-        self.ui.histogram.hide()
-        self.ui.roiBtn.hide()
-        self.ui.menuBtn.hide()
-
-        # Add scatter plot item for ROI display
-        self.sct = pg.ScatterPlotItem(symbol='o', size=6)
-        self.sct.setPen(pg.mkPen({'color': 'black', 'width': 3}))
-        self.sct.setBrush(pg.mkBrush(color='white'))
-        self.view.addItem(self.sct)
-
-        # Add region image item
-        self.region_image_items = {}
-
-        # Add lines
-        self.vline = VerticalLine(self)
-        self.view.addItem(self.vline)
-
-        self.hline = HorizontalLine(self)
-        self.view.addItem(self.hline)
-
-        # Add anatomical directions
-        # self.direction_text_item = pg.TextItem(self.direction_label)
-        # self.view.addItem(self.direction_text_item)
-        # self.direction_text_item.setPos(30, 20)
-        # self.label_image_item = pg.ImageItem(tifffile.imread('icon_rostral_dorsal.tiff'))
-        # self.label_image_item.setScale(0.05)
-        # self.view.addItem(self.label_image_item)
-
-        # Connect
-        self.sigTimeChanged.connect(self.time_changed)
-        self.sig_index_changed.connect(self.update_regions)
-        self.sig_index_changed.connect(self.update_scatter)
-
-    @abstractmethod
-    def get_region_slice(self, region: np.ndarray):
-        pass
-
-    @abstractmethod
-    def get_coordinate_slice(self) -> np.ndarray:
-        pass
-
-    @abstractmethod
-    def update_marker_image(self):
-        pass
-
-    @abstractmethod
-    def ymax(self) -> int:
-        pass
-
-    def time_changed(self):
-        """Check currentIndex against last_idx. This is done to prevent unnecessary update calls, since
-        sigTimeChanged is also emitted on fractional changes of the timeline
-        """
-
-        cur_idx = self.currentIndex
-        if self.last_idx == cur_idx:
-            return
-
-        self.last_idx = cur_idx
-
-        self.sig_index_changed.emit(cur_idx)
-
-    def update_regions(self):
-
-        # Hide all
-        for image_item in self.region_image_items.values():
-            image_item.hide()
-
-        # Update all
-        for i, (name, (region, _)) in enumerate(self.window().regions.items()):
-
-            image_item = self.region_image_items.get(name)
-
-            # Create
-            if image_item is None:
-                image_item = pg.ImageItem()
-                image_item.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_ColorDodge)
-                self.view.addItem(image_item)
-                self.region_image_items[name] = image_item
-
-            # Set colormap
-            color = self.window().region_colors[name]
-            cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], color], linearize=True)
-            image_item.setColorMap(cmap)
-            # image_item.setColorMap('CET-L14')
-
-            region_slice = self.get_region_slice(region)
-            image_item.setImage(region_slice)
-            image_item.show()
-
-    def update_scatter(self):
-
-        # Skip if no points are set
-        if self.window().points is None:
-            return
-
-        data_slice = self.get_coordinate_slice()
-
-        # print('>', len(data_slice))
-        if len(data_slice) > 0:
-            self.sct.setData(*data_slice.T)
-        else:
-            self.sct.setData([], [])
-
-    def update_vline(self, idx: int):
-        self.vline.blockSignals(True)
-        self.vline.setPos(idx)
-        self.vline.blockSignals(False)
-
-    def update_hline(self, idx: int):
-        self.hline.blockSignals(True)
-        self.hline.setPos(self.ymax() - idx)
-        self.hline.blockSignals(False)
-
-    def update_index(self, idx: int):
-        self.timeLine.setPos(idx)
-
-
-class SaggitalView(SecionView):
-
-    def update_marker_image(self):
-        self.setImage(self.window().marker_image[:, :, ::-1], axes={'t': 0, 'x': 1, 'y': 2, 'c': 3})
-        self.timeLine.setPos(self.window().marker_image.shape[0] // 2)
-
-    def get_region_slice(self, region: np.ndarray):
-        return np.swapaxes(region[self.currentIndex, :, :], 0, 1)[::-1, :]
-
-    def get_coordinate_slice(self) -> np.ndarray:
-
-        data_slice = self.window().points[self.window().points[:, 0].astype(int) == self.currentIndex, 1:]
-        data_slice[:, 1] = self.window().marker_image.shape[2] - data_slice[:, 1]
-
-        return data_slice
-
-    def ymax(self):
-        return self.window().marker_image.shape[2]
-
-
-class CoronalView(SecionView):
-
-    def update_marker_image(self):
-        self.setImage(self.window().marker_image[::-1, :, :], axes={'t': 2, 'x': 1, 'y': 0, 'c': 3})
-        self.timeLine.setPos(self.window().marker_image.shape[2] // 2)
-
-    def get_region_slice(self, region: np.ndarray):
-        return region[::-1, :, self.currentIndex]
-
-    def get_coordinate_slice(self) -> np.ndarray:
-        data_slice = self.window().points[self.window().points[:, 2].astype(int) == self.currentIndex, :2][:, ::-1]
-        data_slice[:, 1] = self.ymax() - data_slice[:, 1]
-
-        return data_slice
-
-    def ymax(self):
-        return self.window().marker_image.shape[0]
-
-
-class TransversalView(SecionView):
-
-    def update_marker_image(self):
-        self.setImage(self.window().marker_image[:, :, ::-1], axes={'t': 1, 'x': 0, 'y': 2, 'c': 3})
-        self.timeLine.setPos(self.window().marker_image.shape[1] // 2)
-
-    def get_region_slice(self, region: np.ndarray):
-        return np.swapaxes(region[:, self.currentIndex, :], 0, 1)[::-1, :]
-
-    def get_coordinate_slice(self) -> np.ndarray:
-        data_slice = self.window().points[self.window().points[:, 1].astype(int) == self.currentIndex, ::2]
-        data_slice[:, 1] = self.window().marker_image.shape[2] - data_slice[:, 1]
-
-        return data_slice
-
-    def ymax(self):
-        return self.window().marker_image.shape[2]
-
-
-class MovableLine(pg.InfiniteLine):
-
-    _angle: int = None
-    sig_position_changed = QtCore.Signal(int)
-
-    def __init__(self, section_view: SecionView):
-        pg.InfiniteLine.__init__(self, angle=self._angle, movable=True)
-        self.section_view = section_view
-
-        self.setPen(pg.mkPen(color=(200, 200, 100), width=3))
-        self.setHoverPen(pg.mkPen(color=(255, 0, 0), width=self.pen.width()))
-
-        self.sigPositionChanged.connect(self.position_changed)
-
-    @abstractmethod
-    def position_changed(self, line: pg.InfiniteLine):
-        pass
-
-
-class HorizontalLine(MovableLine):
-
-    _angle = 0
-
-    def position_changed(self, line: pg.InfiniteLine):
-        self.sig_position_changed.emit(self.section_view.ymax() - int(line.getPos()[1]))
-
-
-class VerticalLine(MovableLine):
-
-    _angle = 90
-
-    def position_changed(self, line: pg.InfiniteLine):
-        self.sig_position_changed.emit(int(line.getPos()[0]))
-
-
-class VolumeView(gl.GLViewWidget):
-
-    mesh_items: Dict[str, gl.GLMeshItem] = {}
-
-    volume_bounds: np.ndarray = None
-    plane_color = np.array([200, 200, 100, 5])
-    plane_thickness = 3
-
-    def __init__(self, window: Window):
-        gl.GLViewWidget.__init__(self, parent=window)
-        self.opts['fov'] = 1.
-
-        self.scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pxMode=False)
-        self.scatter_item .setGLOptions('additive')
-        self.addItem(self.scatter_item)
-
-        sag_data = np.ones((3, 100, 100, 4)) * self.plane_color[None, None, None, :]
-        self.saggital_plane = gl.GLVolumeItem(sag_data)
-        self.saggital_plane.setGLOptions('additive')
-        self.addItem(self.saggital_plane)
-
-        cor_data = np.ones((100, 100, 3, 4)) * self.plane_color[None, None, None, :]
-        self.coronal_plane = gl.GLVolumeItem(cor_data)
-        self.coronal_plane.setGLOptions('additive')
-        self.addItem(self.coronal_plane)
-
-        trans_data = np.ones((100, 3, 100, 4)) * self.plane_color[None, None, None, :]
-        self.transverse_plane = gl.GLVolumeItem(trans_data)
-        self.transverse_plane.setGLOptions('additive')
-        self.addItem(self.transverse_plane)
-
-    def marker_image_updated(self):
-
-        volume_shape = self.window().marker_image.shape[:3]
-
-        self.volume_bounds = np.array(volume_shape, dtype=np.float32)
-
-        # Set plane extents
-        sag_data = (np.ones((self.plane_thickness, volume_shape[1], volume_shape[2], 4)) * self.plane_color[None, None, None, :]).astype(np.uint8)
-        self.saggital_plane.setData(sag_data)
-
-        cor_data = (np.ones((volume_shape[0], volume_shape[1], self.plane_thickness, 4)) * self.plane_color[None, None, None, :]).astype(np.uint8)
-        self.coronal_plane.setData(cor_data)
-
-        trans_data = np.ones((volume_shape[0], self.plane_thickness, volume_shape[2], 4))
-        trans_data *= self.plane_color[None, None, None, :]
-        self.transverse_plane.setData(trans_data)
-
-        # Translate
-        self.set_saggital_position(self.window().marker_image.shape[0] // 2)
-        self.set_coronal_position(self.window().marker_image.shape[2] // 2)
-        self.set_transverse_position(self.window().marker_image.shape[1] // 2)
-
-        # Set camera
-        self.setCameraPosition(pos=Vector(*[int(i // 2) for i in self.window().marker_image.shape[:3]]), distance=60000)
-
-    def set_saggital_position(self, current_idx: int):
-
-        if self.volume_bounds is None:
-            return
-
-        self.saggital_plane.resetTransform()
-        self.saggital_plane.translate(self.volume_bounds[0]-current_idx, 0, 0)
-
-    def set_coronal_position(self, current_idx: int):
-
-        if self.volume_bounds is None:
-            return
-
-        self.coronal_plane.resetTransform()
-        self.coronal_plane.translate(0, 0, current_idx)
-
-    def set_transverse_position(self, current_idx: int):
-
-        if self.volume_bounds is None:
-            return
-
-        self.transverse_plane.resetTransform()
-        self.transverse_plane.translate(0, current_idx, 0)
-
-    def update_scatter(self):
-        points = self.window().points
-        points[:, 0] = self.volume_bounds[0] - points[:, 0]
-        self.scatter_item.setData(pos=points)
-        self.scatter_item.setData(color=(1., 1., 1., 0.1))
-
-    def update_regions(self):
-
-        for mesh_item in self.mesh_items.values():
-            mesh_item.hide()
-
-        for i, (name, (_, region_mesh)) in enumerate(self.window().regions.items()):
-
-            if name not in self.mesh_items:
-                vecs = region_mesh.vectors
-                # Invert X for GL view
-                vecs[:, :, 0] = self.volume_bounds[0] - vecs[:, :, 0]
-
-                data_item = gl.MeshData(vertexes=vecs)
-                mesh_item = gl.GLMeshItem(meshdata=data_item, smooth=True, shader='balloon')
-                mesh_item.setGLOptions('additive')
-
-                self.addItem(mesh_item)
-                self.mesh_items[name] = mesh_item
-
-            mesh_item = self.mesh_items[name]
-
-            # Show mesh
-            mesh_item.show()
-
-            # Set color
-            color = self.window().region_colors[name]
-            mesh_item.setColor(color.getRgbF())
-
-
-class PrettyView(QtWidgets.QWidget):
-
-    ortho_views = {
-        'xy': (-90, 90),
-        'xz': (-90, 0),
-        'yz': (0, 0),
-        '-xy': (90, -90),
-        '-xz': (90, 0),
-        '-yz': (180, 0),
-    }
-
-    def __init__(self, parent):
-        QtWidgets.QWidget.__init__(self, parent)
-        self.setWindowFlag(QtCore.Qt.WindowType.Window)
-        self.setMinimumSize(1000, 600)
-        self.setLayout(QtWidgets.QHBoxLayout())
-
-        self.region_items: Dict[str, Poly3DCollection] = {}
-
-        # Add property tuner
-        self.property_tuner = QtWidgets.QGroupBox('Properties', self)
-        self.property_tuner.setMaximumWidth(250)
-        self.property_tuner.setLayout(QtWidgets.QVBoxLayout())
-        self.layout().addWidget(self.property_tuner)
-
-        self.property_tuner.layout().addWidget(QtWidgets.QLabel('Set orthogonal view'))
-        self.view_selector = QtWidgets.QWidget()
-        self.view_selector.setLayout(QtWidgets.QHBoxLayout())
-        self.property_tuner.layout().addWidget(self.view_selector)
-        self.view_btns = []
-        for view in ['xy', 'xz', 'yz', '-xy', '-xz', '-yz']:
-            btn = QtWidgets.QPushButton(view.upper())
-            btn.clicked.connect(self._get_set_view_fun(view))
-            self.view_btns.append(btn)
-            self.view_selector.layout().addWidget(btn)
-
-        self.property_tuner.layout().addStretch()
-
-        # Save to file button
-        self.save_to_file_btn = QtWidgets.QPushButton('Save to file')
-        self.save_to_file_btn.clicked.connect(self.save_to_file)
-        self.property_tuner.layout().addWidget(self.save_to_file_btn)
-
-        # Add figure canvas
-        self.fig_canvas = FigureCanvasQTAgg()
-        self.ax = self.fig_canvas.figure.add_subplot(projection='3d')
-        self.ax.set_proj_type('ortho')
-        self.layout().addWidget(self.fig_canvas)
-
-        pos_marker_color = (200 / 255, 200 / 255, 100 / 255)
-        pos_marker_linewidth = 1.5
-
-        # Add lines
-        self.xline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
-        self.yline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
-        self.zline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
-
-        self.ax.axes.set_axis_off()
-        self.fig_canvas.figure.tight_layout()
-
-        # Show
-        self.show()
-
-        # Update view
-        camera_params = window.volume_view.cameraParams()
-        self.update_current_position()
-        self.set_view(azim=camera_params['azimuth'], elev=camera_params['elevation'])
-        self.update_regions()
-
-    def showEvent(self, event, /):
-
-        # window.saggital_view.sig_index_changed.connect(self.update_current_position)
-        # window.coronal_view.sig_index_changed.connect(self.update_current_position)
-        # window.transverse_view.sig_index_changed.connect(self.update_current_position)
-        # window.sig_regions_updated.connect(self.update_regions)
-
-        event.accept()
-
-    def closeEvent(self, event, /):
-
-        # window.saggital_view.sig_index_changed.disconnect(self.update_current_position)
-        # window.coronal_view.sig_index_changed.disconnect(self.update_current_position)
-        # window.transverse_view.sig_index_changed.disconnect(self.update_current_position)
-        # window.sig_regions_updated.disconnect(self.update_regions)
-
-        event.accept()
-
-    def update_regions(self):
-
-        for name, (_, region_mesh) in window.regions.items():
-            if name not in self.region_items:
-                coll = Poly3DCollection(region_mesh.vectors, facecolors='black', edgecolors='none')
-                self.ax.add_collection3d(coll)
-                self.region_items[name] = coll
-
-            coll = self.region_items[name]
-            color = window.region_colors[name]
-            coll.set_facecolor(color.getRgbF())
-
-        self.fig_canvas.draw()
-
-    def update_current_position(self):
-
-        current_position = (window.saggital_view.currentIndex,
-                            window.transverse_view.currentIndex,
-                            window.coronal_view.currentIndex)
-
-        volume_shape = window.marker_image.shape[:3]
-
-        self.ax.set_box_aspect(volume_shape)
-
-        self.ax.set_xlim(current_position[0] - volume_shape[0] / 2, current_position[0] + volume_shape[0] / 2)
-        self.ax.set_ylim(current_position[1] - volume_shape[1] / 2, current_position[1] + volume_shape[1] / 2)
-        self.ax.set_zlim(current_position[2] - volume_shape[2] / 2, current_position[2] + volume_shape[2] / 2)
-
-        vol_half_range = np.array(volume_shape) / 2
-
-        xline = np.array([[volume_shape[0] - current_position[0] - vol_half_range[0], current_position[1], current_position[2]],
-                          [volume_shape[0] - current_position[0] + vol_half_range[0], current_position[1], current_position[2]]])
-
-        yline = np.array([[volume_shape[0] - current_position[0], current_position[1] - vol_half_range[1], current_position[2]],
-                          [volume_shape[0] - current_position[0], current_position[1] + vol_half_range[1], current_position[2]]])
-
-        zline = np.array([[volume_shape[0] - current_position[0], current_position[1], current_position[2] - vol_half_range[2]],
-                          [volume_shape[0] - current_position[0], current_position[1], current_position[2] + vol_half_range[2]]])
-
-        self.xline.set_data_3d(*xline.T)
-        self.yline.set_data_3d(*yline.T)
-        self.zline.set_data_3d(*zline.T)
-
-        self.fig_canvas.draw()
-
-    def _get_set_view_fun(self, view: str):
-
-        def _set_view():
-            return self.set_view(view=view)
-
-        return _set_view
-
-    def set_view(self, view: str = None, azim: float = None, elev: float = None):
-
-        if view is not None:
-            print(f'Set view to {view}')
-            azim = self.ortho_views[view][0]
-            elev = self.ortho_views[view][1]
-
-        if azim is None or elev is None:
-            raise ValueError('Azimuth and elevation need to be set')
-
-        self.ax.view_init(azim=azim, elev=elev)
-        self.fig_canvas.draw()
-
-    def add_dots(self):
-
-        self.ax.scatter(*np.random.normal(size=(3, 50)))
-        self.fig_canvas.draw()
-
-    def save_to_file(self):
-
-        # TODO: file selection dialog
-
-        self.fig_canvas.figure.savefig('test.png', dpi=300)
-
-
-class SearchSelectTreeWidget(QtWidgets.QWidget):
-
-    ContinuousIdRole = 40
-    UniqueNameRole = 50
-    ColorRole = 60
-
-    sig_item_selected = QtCore.Signal(QtWidgets.QTreeWidgetItem)
-    sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
-    sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
-
-    item_count = 0
-
-    def __init__(self, *args, colorpicker: bool = False):
-        QtWidgets.QWidget.__init__(self, *args)
-        self.colorpicker = colorpicker
-        self.setLayout(QtWidgets.QVBoxLayout())
-
-        # Add searchfield
-        self.search_field = QtWidgets.QLineEdit('')
-        self.search_field.setPlaceholderText('Type to search for region')
-        self.search_field.textChanged.connect(self.search_tree)
-        self.layout().addWidget(self.search_field)
-
-        # Add tree widget
-        self.tree_widget = QtWidgets.QTreeWidget()
-        self.tree_widget.headerItem().setText(0, 'Regions')
-        self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.tree_widget.headerItem().setText(1, '')
-        self.tree_widget.header().resizeSection(1, 50)
-        self.tree_widget.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        if self.colorpicker:
-            self.tree_widget.headerItem().setText(2, '')
-            self.tree_widget.header().resizeSection(2, 25)
-            self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.tree_widget.header().setStretchLastSection(False)
-
-        self.sig_item_color_changed.connect(self.update_colorpicker_button)
-
-        self.selected_items = []
-
-    def build_tree(self, data: dict):
-
-        self.selected_items.clear()
-        self.tree_widget.clear()
-
-        self.item_count = 0
-
-        # Recursive build function
-        def _build_tree(name: str, data: dict, parent_item = None):
-            parent_item = parent_item if parent_item is not None else self.tree_widget
-
-            # Add tree item
-            tree_item = QtWidgets.QTreeWidgetItem(parent_item)
-
-            # Add label
-            label = QtWidgets.QLabel(name, self.tree_widget)
-            self.tree_widget.setItemWidget(tree_item, 0, label)
-
-            # Add select button
-            select_btn = QtWidgets.QPushButton('show')
-            select_btn.setContentsMargins(0, 0, 0, 0)
-            select_btn.clicked.connect(lambda: self.toggle_item(tree_item))
-            self.tree_widget.setItemWidget(tree_item, 1, select_btn)
-
-            # Add colorpicker button
-            color_btn = QtWidgets.QPushButton(f' ')
-            color_btn.setContentsMargins(0, 0, 0, 0)
-            color_btn.clicked.connect(lambda: self.open_colorpicker(tree_item))
-            self.tree_widget.setItemWidget(tree_item, 2, color_btn)
-            color_btn = self.tree_widget.itemWidget(tree_item, 2)
-            color_btn.setDisabled(True)
-
-            # Set item data
-            tree_item.setData(0, SearchSelectTreeWidget.UniqueNameRole, name)
-            tree_item.setData(0, SearchSelectTreeWidget.ContinuousIdRole, self.item_count)
-
-            # Increment before children
-            self.item_count += 1
-
-            # Go through children
-            if isinstance(data, dict):
-                for n, d in data.items():
-                    tree_item.addChild(_build_tree(n, d, tree_item))
-
-            return tree_item
-
-        for tl_name, tl_data in data.items():
-            item = _build_tree(tl_name, tl_data)
-            self.tree_widget.addTopLevelItem(item)
-        self.layout().addWidget(self.tree_widget)
-
-    def search_tree(self, search_text: str):
-
-        def _find_text_in_item(item: QtWidgets.QTreeWidgetItem, match: bool) -> bool:
-            for i in range(item.childCount()):
-                child = item.child(i)
-                match |= _find_text_in_item(child, match)
-
-            # Get text to search
-            item_text = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
-
-            # Check match
-            selected = item in self.selected_items
-            found = (len(search_text) > 0 and search_text in item_text)
-            match |= found | selected
-
-            # Set visibility and expansion state
-            item.setHidden(not match)
-            if len(search_text) == 0:
-                item.setHidden(False)
-            item.setExpanded(match)
-
-            # Update label to mark search phrase
-            lbl = self.tree_widget.itemWidget(item, 0)
-            if match:
-                lbl.setText(item_text.replace(search_text, f'<span style="color: red">{search_text}</span>'))
-            else:
-                lbl.setText(item_text)
-
-            return match
-
-        # Run search
-        for i in range(self.tree_widget.topLevelItemCount()):
-            _find_text_in_item(self.tree_widget.topLevelItem(i), False)
-
-    def select_exact_match_in_tree(self, search_text: str):
-
-        def _find_item_in_tree(item: QtWidgets.QTreeWidgetItem) -> Union[QtWidgets.QTreeWidgetItem, None]:
-
-            # Get text to search
-            item_text = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
-
-            if item_text == search_text:
-                return item
-
-            # Go through children
-            for i in range(item.childCount()):
-                child = item.child(i)
-                ret = _find_item_in_tree(child)
-
-                if ret is not None:
-                    return ret
-
-            return None
-
-        # Run search
-        for i in range(self.tree_widget.topLevelItemCount()):
-            final_ret = _find_item_in_tree(self.tree_widget.topLevelItem(i))
-
-            if final_ret is not None:
-                self.toggle_item(final_ret)
-                # Search tree to cause selected item to expand
-                self.search_tree('')
-                break
-
-    def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
-
-        # Add item
-        if tree_item not in self.selected_items:
-            # print(f'Selected {tree_item}')
-
-            self.selected_items.append(tree_item)
-
-            # Set select button
-            btn = self.tree_widget.itemWidget(tree_item, 1)
-            btn.setText('hide')
-
-            # Set color and state on color picker button
-            # color = cc.m_glasbey_bw(self.get_item_continuous_id(tree_item))[:3]
-            color = cc.glasbey_hv[self.get_item_continuous_id(tree_item)]
-            # color = cc.m_glasbey_warm(self.get_item_continuous_id(tree_item))[:3]
-            color = QtGui.QColor.fromRgbF(*color, 0.1)
-            color_btn = self.tree_widget.itemWidget(tree_item, 2)
-            color_btn.setDisabled(False)
-
-            # Set color to item data
-            self.set_item_color(tree_item, color)
-
-            self.sig_item_selected.emit(tree_item)
-
-        # Remove item
-        else:
-            print(f'Removed {tree_item}')
-
-            # Update select button
-            label = self.tree_widget.itemWidget(tree_item, 0)
-            label.setStyleSheet('')
-            btn = self.tree_widget.itemWidget(tree_item, 1)
-            btn.setText('show')
-
-            # Update color picker button
-            color_btn = self.tree_widget.itemWidget(tree_item, 2)
-            color_btn.setStyleSheet('')
-            color_btn.setDisabled(True)
-
-            # Remove item
-            self.selected_items.remove(tree_item)
-            self.sig_item_removed.emit(tree_item)
-
-    def open_colorpicker(self, tree_item: QtWidgets.QTreeWidgetItem):
-
-        current_color = self.get_item_color(tree_item)
-
-        new_color = QtWidgets.QColorDialog().getColor(initial=current_color,
-                                                      options=QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel)
-
-        if new_color.isValid():
-            print(f'New color set for {self.get_item_name(tree_item)}')
-            self.set_item_color(tree_item, new_color)
-
-    def update_colorpicker_button(self, tree_item: QtWidgets.QTreeWidgetItem):
-
-        color = self.get_item_color(tree_item)
-        color_btn = self.tree_widget.itemWidget(tree_item, 2)
-        color_btn.setStyleSheet(f'background-color: rgba{color.getRgb()};')
-
-    def get_item_name(self, tree_item: QtWidgets.QTreeWidgetItem):
-        return tree_item.data(0, self.UniqueNameRole)
-
-    def get_item_continuous_id(self, tree_item: QtWidgets.QTreeWidgetItem):
-        return tree_item.data(0, self.ContinuousIdRole)
-
-    def get_item_color(self, tree_item: QtWidgets.QTreeWidgetItem) -> QtGui.QColor:
-        return tree_item.data(0, self.ColorRole)
-
-    def set_item_color(self, tree_item: QtWidgets.QTreeWidgetItem, color: QtGui.QColor):
-        tree_item.setData(0, self.ColorRole, color)
-
-        self.sig_item_color_changed.emit(tree_item)
-
-
-class RoiListWidget(QtWidgets.QGroupBox):
-
-    _drop_text = 'Drop files to load...'
-
-    sig_path_added = QtCore.Signal(str)
-
-    def __init__(self, parent=None):
-        QtWidgets.QGroupBox.__init__(self, 'ROIs', parent)
-        self.setAcceptDrops(True)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(300)
-        self.setLayout(QtWidgets.QVBoxLayout())
-
-        self.drop_label = QtWidgets.QLabel(self._drop_text)
-        self.layout().addWidget(self.drop_label)
-
-        self.list_widget = QtWidgets.QListWidget()
-        self.layout().addWidget(self.list_widget)
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            ext = event.mimeData().urls()[0].fileName().split('.')[-1]
-            self.list_widget.hide()
-            self.setFixedSize(self.size())
-
-            if ext.lower() in ['h5', 'hdf5', 'npy', 'json', 'csv']:
-                self.drop_label.setText(f'Drop {ext.upper()} file here to load')
-                self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            else:
-                self.drop_label.setText(f'Unable to import file with extension {ext.upper()}')
-                self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-
-            event.accept()
-
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.reset_widgets()
-        event.accept()
-
-    def dropEvent(self, event):
-        self.drop_label.setText('Loading data...')
-
-        QtWidgets.QApplication.instance().processEvents()
-
-        for url in event.mimeData().urls():
-            print(f'Load ROIs from {url}')
-            ext = url.fileName().split('.')[-1]
-
-            if ext in ['h5', 'hdf5', 'npy', 'json', 'csv']:
-                self.sig_path_added.emit(url.path().strip('/'))
-
-        self.reset_widgets()
-
-    def reset_widgets(self):
-        self.list_widget.show()
-        self.drop_label.setText(self._drop_text)
-
-        self.setMaximumSize(9999, 9999)
-        self.setMinimumSize(0, 0)
-
-
-class ControlPanel(QtWidgets.QGroupBox):
-
-    sig_region_color_changed = QtCore.Signal(str, QtGui.QColor)
-    sig_roi_data_changed = QtCore.Signal()
-
-    pretty_view: PrettyView = None
-
-    def __init__(self, window: Window):
-        QtWidgets.QGroupBox.__init__(self, 'Navigation', parent=window)
-        # self.window = window
-
-        self.setMinimumWidth(300)
-        self.setMaximumWidth(400)
-        self.setLayout(QtWidgets.QVBoxLayout())
-
-        self.region_tree = SearchSelectTreeWidget(colorpicker=True)
-        self.region_tree.build_tree(regions.structure)
-        self.region_tree.sig_item_selected.connect(self.region_selected)
-        self.region_tree.sig_item_removed.connect(self.region_removed)
-        self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
-        self.layout().addWidget(self.region_tree)
-
-        self.roi_list = RoiListWidget()
-        self.roi_list.sig_path_added.connect(self.roi_path_added)
-        self.layout().addWidget(self.roi_list)
-
-        self.export_to_image_btn = QtWidgets.QPushButton('Export view to image')
-        self.export_to_image_btn.clicked.connect(self.open_pretty_view)
-        self.layout().addWidget(self.export_to_image_btn)
-
-    def open_pretty_view(self):
-
-        if self.pretty_view is not None:
-            self.pretty_view.close()
-
-        self.pretty_view = PrettyView(self)
-
-
-    def roi_path_added(self, path: str):
-        ext = path.split('.')[-1]
-
-        if ext in ['h5', 'hdf5']:
-            df: pd.DataFrame = pd.read_hdf(path)
-            keys = []
-            for _n in ['x', 'y', 'z']:
-                _keys = [k for k in df.keys() if _n in k]
-                if len(_keys) > 0:
-                    keys.append(_keys[0])
-
-            if len(keys) == 0:
-                raise KeyError('No matching coordinate keys found for x/y/z')
-
-            print(f'Found coordinate keys: {keys}')
-
-            data = df[keys].values
-
-        elif ext == 'npy':
-            data = np.load(path)
-
-        else:
-            data = None
-
-        # Deal with NaNs
-        if np.any(np.isnan(data)):
-            print('WARNING: coordinates contain NaN values')
-            data = data[~np.any(np.isnan(data), axis=1), :]
-
-        self.window().points = data
-
-        self.sig_roi_data_changed.emit()
-
-    def region_selected(self, item: QtWidgets.QTreeWidgetItem):
-        name = self.region_tree.get_item_name(item)
-        self.window().add_region(name)
-
-    def region_color_changed(self, item: QtWidgets.QTreeWidgetItem):
-        name = self.region_tree.get_item_name(item)
-        color = self.region_tree.get_item_color(item)
-
-        self.sig_region_color_changed.emit(name, color)
-
-    def region_removed(self, item: QtWidgets.QTreeWidgetItem):
-        name = item.data(0, SearchSelectTreeWidget.UniqueNameRole)
-        self.window().remove_region(name)
 
 
 class Window(QtWidgets.QMainWindow):
@@ -933,7 +42,7 @@ class Window(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self)
         self.resize(1600, 800)
         self.setWindowTitle('MapZeBrain Viewer')
-        self.show()
+        config.window = self
 
         # TODO: handle loading of coordinate data uniformly
         if isinstance(points, pd.DataFrame):
@@ -998,10 +107,33 @@ class Window(QtWidgets.QMainWindow):
         self.transverse_view.sig_index_changed.connect(self.volume_view.set_transverse_position)
 
         # Connect scatter plot updates
-        self.panel.sig_roi_data_changed.connect(self.saggital_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.coronal_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.transverse_view.update_scatter)
-        self.panel.sig_roi_data_changed.connect(self.volume_view.update_scatter)
+        # Saggital view
+        self.panel.roi_list.sig_item_added.connect(self.saggital_view.add_scatter)
+        self.panel.roi_list.sig_item_shown.connect(self.saggital_view.add_scatter)
+        self.panel.roi_list.sig_item_color_changed.connect(self.saggital_view.update_scatter_color)
+        self.panel.roi_list.sig_item_removed.connect(self.saggital_view.remove_scatter)
+        self.panel.roi_list.sig_item_hidden.connect(self.saggital_view.remove_scatter)
+
+        # Coronal view
+        self.panel.roi_list.sig_item_added.connect(self.coronal_view.add_scatter)
+        self.panel.roi_list.sig_item_shown.connect(self.coronal_view.add_scatter)
+        self.panel.roi_list.sig_item_color_changed.connect(self.coronal_view.update_scatter_color)
+        self.panel.roi_list.sig_item_removed.connect(self.coronal_view.remove_scatter)
+        self.panel.roi_list.sig_item_hidden.connect(self.coronal_view.remove_scatter)
+
+        # Transverse view
+        self.panel.roi_list.sig_item_added.connect(self.transverse_view.add_scatter)
+        self.panel.roi_list.sig_item_shown.connect(self.transverse_view.add_scatter)
+        self.panel.roi_list.sig_item_color_changed.connect(self.transverse_view.update_scatter_color)
+        self.panel.roi_list.sig_item_removed.connect(self.transverse_view.remove_scatter)
+        self.panel.roi_list.sig_item_hidden.connect(self.transverse_view.remove_scatter)
+
+        # Volumetric view
+        self.panel.roi_list.sig_item_added.connect(self.volume_view.add_scatter)
+        self.panel.roi_list.sig_item_shown.connect(self.volume_view.add_scatter)
+        self.panel.roi_list.sig_item_color_changed.connect(self.volume_view.update_scatter_color)
+        self.panel.roi_list.sig_item_removed.connect(self.volume_view.remove_scatter)
+        self.panel.roi_list.sig_item_hidden.connect(self.volume_view.remove_scatter)
 
         marker_catalog_path = os.path.join(self.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
@@ -1015,7 +147,7 @@ class Window(QtWidgets.QMainWindow):
 
         # Make sure marker line is set
         if marker is None:
-            marker = mapzebview.default_marker_name
+            marker = config.default_marker_name
             print(f'Set to use defaul marker line: {marker}')
 
         # Set
@@ -1026,6 +158,8 @@ class Window(QtWidgets.QMainWindow):
             for r in regions:
                 self.panel.region_tree.select_exact_match_in_tree(r)
 
+        # Show
+        self.show()
 
     def marker_path(self):
         path = os.path.join(os.getenv('LOCALAPPDATA'), 'mapzebview', 'markers')
@@ -1037,7 +171,7 @@ class Window(QtWidgets.QMainWindow):
 
     def set_marker(self, name: str):
 
-        if not debug:
+        if not config.debug:
             print(f'Set marker to {name}')
             self.marker_image = self.load_marker(name)
             # path = f'../../ants_registration/ants_registration/mapzebrain/{name}.tif'
@@ -1108,7 +242,7 @@ class Window(QtWidgets.QMainWindow):
 
         name_str = name.replace(' ', '_')
         file_path = os.path.join(self.region_path(), f'{name_str}.tif')
-        print(f'Load region {file_path}')
+        print(f'Load region volume {file_path}')
 
         if not os.path.exists(file_path):
             self.download_region(name_str)
@@ -1116,7 +250,9 @@ class Window(QtWidgets.QMainWindow):
         im = np.swapaxes(np.moveaxis(tifffile.imread(file_path), 0, 2), 0, 1)
 
         try:
-            mesh = stl.Mesh.from_file(os.path.join(self.region_path(), f'{name_str}.stl'))
+            path_stl = os.path.join(self.region_path(), f'{name_str}.stl')
+            print(f'Load region mesh {path_stl}')
+            mesh = stl.Mesh.from_file(path_stl)
         except FileNotFoundError as e:
             print(f'WARNING: no mesh data for {name}')
             mesh = None
@@ -1143,8 +279,514 @@ class Window(QtWidgets.QMainWindow):
         self.sig_regions_updated.emit()
 
 
+class ControlPanel(QtWidgets.QGroupBox):
+
+    sig_region_color_changed = QtCore.Signal(str, QtGui.QColor)
+    sig_roi_data_changed = QtCore.Signal()
+
+    pretty_view: PrettyView = None
+
+    def __init__(self, parent: Window):
+        QtWidgets.QGroupBox.__init__(self, 'Navigation', parent=parent)
+
+        self.setMinimumWidth(300)
+        self.setMaximumWidth(400)
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        self.region_tree = RegionTreeWidget()
+        self.region_tree.build_tree(regions.structure)
+        self.region_tree.sig_item_selected.connect(self.region_selected)
+        self.region_tree.sig_item_removed.connect(self.region_removed)
+        self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
+        self.layout().addWidget(self.region_tree)
+
+        self.roi_list = RoiWidget(self)
+        self.layout().addWidget(self.roi_list)
+
+        self.export_to_image_btn = QtWidgets.QPushButton('Export view to image')
+        self.export_to_image_btn.clicked.connect(self.open_pretty_view)
+        self.layout().addWidget(self.export_to_image_btn)
+
+    def open_pretty_view(self):
+
+        if self.pretty_view is not None:
+            self.pretty_view.close()
+
+        self.pretty_view = PrettyView(self)
+
+    def region_selected(self, item: QtWidgets.QTreeWidgetItem):
+        name = self.region_tree.get_item_name(item)
+        config.window.add_region(name)
+
+    def region_color_changed(self, item: QtWidgets.QTreeWidgetItem):
+        name = self.region_tree.get_item_name(item)
+        color = self.region_tree.get_item_color(item)
+
+        self.sig_region_color_changed.emit(name, color)
+
+    def region_removed(self, item: QtWidgets.QTreeWidgetItem):
+        name = item.data(0, RegionTreeWidget.UniqueNameRole)
+        config.window.remove_region(name)
+
+
+class RegionTreeWidget(QtWidgets.QWidget):
+
+    ContinuousIdRole = 40
+    UniqueNameRole = 50
+    ColorRole = 60
+
+    sig_item_selected = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+
+    item_count = 0
+
+    def __init__(self, *args):
+        QtWidgets.QWidget.__init__(self, *args)
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        # Add searchfield
+        self.search_field = QtWidgets.QLineEdit('')
+        self.search_field.setPlaceholderText('Type to search for region')
+        self.search_field.textChanged.connect(self.search_tree)
+        self.layout().addWidget(self.search_field)
+
+        # Add tree widget
+        self.tree_widget = QtWidgets.QTreeWidget()
+        self.tree_widget.headerItem().setText(0, 'Regions')
+        self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tree_widget.headerItem().setText(1, '')
+        self.tree_widget.header().resizeSection(1, 50)
+        self.tree_widget.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.headerItem().setText(2, '')
+        self.tree_widget.header().resizeSection(2, 25)
+        self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.header().setStretchLastSection(False)
+
+        self.sig_item_color_changed.connect(self.update_colorpicker_button)
+
+        self.selected_items = []
+
+    def build_tree(self, data: dict):
+
+        self.selected_items.clear()
+        self.tree_widget.clear()
+
+        self.item_count = 0
+
+        # Recursive build function
+        def _build_tree(name: str, data: dict, parent_item = None):
+            parent_item = parent_item if parent_item is not None else self.tree_widget
+
+            # Add tree item
+            tree_item = QtWidgets.QTreeWidgetItem(parent_item)
+
+            # Add label
+            label = QtWidgets.QLabel(name, self.tree_widget)
+            self.tree_widget.setItemWidget(tree_item, 0, label)
+
+            # Add select button
+            select_btn = QtWidgets.QPushButton('show')
+            select_btn.setContentsMargins(0, 0, 0, 0)
+            select_btn.clicked.connect(lambda: self.toggle_item(tree_item))
+            self.tree_widget.setItemWidget(tree_item, 1, select_btn)
+
+            # Add colorpicker button
+            color_btn = QtWidgets.QPushButton(f' ')
+            color_btn.setContentsMargins(0, 0, 0, 0)
+            color_btn.clicked.connect(lambda: self.open_colorpicker(tree_item))
+            self.tree_widget.setItemWidget(tree_item, 2, color_btn)
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(True)
+
+            # Set item data
+            tree_item.setData(0, RegionTreeWidget.UniqueNameRole, name)
+            tree_item.setData(0, RegionTreeWidget.ContinuousIdRole, self.item_count)
+
+            # Increment before children
+            self.item_count += 1
+
+            # Go through children
+            if isinstance(data, dict):
+                for n, d in data.items():
+                    tree_item.addChild(_build_tree(n, d, tree_item))
+
+            return tree_item
+
+        for tl_name, tl_data in data.items():
+            item = _build_tree(tl_name, tl_data)
+            self.tree_widget.addTopLevelItem(item)
+        self.layout().addWidget(self.tree_widget)
+
+    def search_tree(self, search_text: str):
+
+        def _find_text_in_item(item: QtWidgets.QTreeWidgetItem, match: bool) -> bool:
+            for i in range(item.childCount()):
+                child = item.child(i)
+                match |= _find_text_in_item(child, match)
+
+            # Get text to search
+            item_text = item.data(0, RegionTreeWidget.UniqueNameRole)
+
+            # Check match
+            selected = item in self.selected_items
+            found = (len(search_text) > 0 and search_text in item_text)
+            match |= found | selected
+
+            # Set visibility and expansion state
+            item.setHidden(not match)
+            if len(search_text) == 0:
+                item.setHidden(False)
+            item.setExpanded(match)
+
+            # Update label to mark search phrase
+            lbl = self.tree_widget.itemWidget(item, 0)
+            if match:
+                lbl.setText(item_text.replace(search_text, f'<span style="color: red">{search_text}</span>'))
+            else:
+                lbl.setText(item_text)
+
+            return match
+
+        # Run search
+        for i in range(self.tree_widget.topLevelItemCount()):
+            _find_text_in_item(self.tree_widget.topLevelItem(i), False)
+
+    def select_exact_match_in_tree(self, search_text: str):
+
+        def _find_item_in_tree(item: QtWidgets.QTreeWidgetItem) -> Union[QtWidgets.QTreeWidgetItem, None]:
+
+            # Get text to search
+            item_text = item.data(0, RegionTreeWidget.UniqueNameRole)
+
+            if item_text == search_text:
+                return item
+
+            # Go through children
+            for i in range(item.childCount()):
+                child = item.child(i)
+                ret = _find_item_in_tree(child)
+
+                if ret is not None:
+                    return ret
+
+            return None
+
+        # Run search
+        for i in range(self.tree_widget.topLevelItemCount()):
+            final_ret = _find_item_in_tree(self.tree_widget.topLevelItem(i))
+
+            if final_ret is not None:
+                self.toggle_item(final_ret)
+                # Search tree to cause selected item to expand
+                self.search_tree('')
+                break
+
+    def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        # Add item
+        if tree_item not in self.selected_items:
+
+            self.selected_items.append(tree_item)
+
+            # Set select button
+            select_btn = self.tree_widget.itemWidget(tree_item, 1)
+            select_btn.setText('hide')
+
+            # Set state and coloron color picker button
+            color = cc.glasbey_hv[self.get_item_continuous_id(tree_item)]
+            color = QtGui.QColor.fromRgbF(*color, 1.0)
+            self.set_item_color(tree_item, color)
+
+            # Enable color picker button
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(False)
+
+            # Emit signal
+            self.sig_item_selected.emit(tree_item)
+
+        # Remove item
+        else:
+
+            # Update label
+            label = self.tree_widget.itemWidget(tree_item, 0)
+            label.setStyleSheet('')
+
+            # Update select button
+            select_btn = self.tree_widget.itemWidget(tree_item, 1)
+            select_btn.setText('show')
+
+            # Update color picker button
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setStyleSheet('')
+            color_btn.setDisabled(True)
+
+            # Remove item
+            self.selected_items.remove(tree_item)
+
+            # Emit signal
+            self.sig_item_removed.emit(tree_item)
+
+    def open_colorpicker(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        current_color = self.get_item_color(tree_item)
+
+        new_color = QtWidgets.QColorDialog().getColor(initial=current_color,
+                                                      options=QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel)
+
+        if new_color.isValid():
+            print(f'New color set for {self.get_item_name(tree_item)}')
+            self.set_item_color(tree_item, new_color)
+
+    def update_colorpicker_button(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        color = self.get_item_color(tree_item)
+        color_btn = self.tree_widget.itemWidget(tree_item, 2)
+        color_btn.setStyleSheet(f'background-color: rgba{color.getRgb()};')
+
+    def get_item_name(self, tree_item: QtWidgets.QTreeWidgetItem):
+        return tree_item.data(0, self.UniqueNameRole)
+
+    def get_item_continuous_id(self, tree_item: QtWidgets.QTreeWidgetItem):
+        return tree_item.data(0, self.ContinuousIdRole)
+
+    def get_item_color(self, tree_item: QtWidgets.QTreeWidgetItem) -> QtGui.QColor:
+        return tree_item.data(0, self.ColorRole)
+
+    def set_item_color(self, tree_item: QtWidgets.QTreeWidgetItem, color: QtGui.QColor):
+        tree_item.setData(0, self.ColorRole, color)
+
+        self.sig_item_color_changed.emit(tree_item)
+
+
+class RoiWidget(QtWidgets.QGroupBox):
+
+    sig_path_added = QtCore.Signal(str)
+    sig_roi_data_loaded = QtCore.Signal(np.ndarray)
+    sig_item_shown = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_hidden = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_added = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+
+    item_count: int = 0
+    selected_items: List[QtWidgets.QTreeWidgetItem] = []
+
+    def __init__(self, parent=None):
+        QtWidgets.QGroupBox.__init__(self, 'ROIs', parent)
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(300)
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        # Add drop label
+        self.drop_label = QtWidgets.QLabel('Drop files to load...')
+        self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.layout().addWidget(self.drop_label)
+
+        # Add tree widget
+        self.tree_widget = QtWidgets.QTreeWidget(self)
+        self.tree_widget.headerItem().setText(0, 'ROI sets')
+        self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tree_widget.headerItem().setText(1, '')
+        self.tree_widget.header().resizeSection(1, 50)
+        self.tree_widget.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.headerItem().setText(2, '')
+        self.tree_widget.header().resizeSection(2, 25)
+        self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.header().setStretchLastSection(False)
+        self.sig_roi_data_loaded.connect(self.add_roi_set)
+        self.layout().addWidget(self.tree_widget)
+
+        self.sig_path_added.connect(self.load_roi_data)
+        self.sig_item_shown.connect(self.update_color_btn)
+        self.sig_item_hidden.connect(self.update_color_btn)
+        self.sig_item_color_changed.connect(self.update_color_btn)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            ext = event.mimeData().urls()[0].fileName().split('.')[-1]
+
+            if ext.lower() in ['h5', 'hdf5', 'npy', 'json', 'csv']:
+                event.accept()
+            else:
+                event.ignore()
+
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+
+        for url in event.mimeData().urls():
+            print(f'Load ROIs from {url}')
+            ext = url.fileName().split('.')[-1]
+
+            if ext in ['h5', 'hdf5', 'npy', 'json', 'csv']:
+                self.load_roi_data(url.path().strip('/'))
+            else:
+                print(f'WARNING: unknown file type {ext}')
+
+    def keyPressEvent(self, event, /):
+        if event.key() == QtCore.Qt.Key.Key_Delete:
+            current_item = self.tree_widget.currentItem()
+
+            # Check if item is selected
+            if current_item is None:
+                return
+
+            # Delete item
+            print(f'Delete ROI set {current_item.text(0)}')
+
+            # Remove from selection list
+            if current_item in self.selected_items:
+                self.selected_items.remove(current_item)
+
+            # Remove from tree
+            self.tree_widget.invisibleRootItem().removeChild(current_item)
+
+            # Emit item removed signal
+            self.sig_item_removed.emit(current_item)
+
+        QtWidgets.QGroupBox.keyPressEvent(self, event)
+
+    def load_roi_data(self, path: str):
+
+        ext = path.split('.')[-1]
+
+        if ext in ['h5', 'hdf5']:
+            df: pd.DataFrame = pd.read_hdf(path)
+            keys = []
+            for _n in ['x', 'y', 'z']:
+                _keys = [k for k in df.keys() if _n in k]
+                if len(_keys) > 0:
+                    keys.append(_keys[0])
+
+            if len(keys) == 0:
+                raise KeyError('No matching coordinate keys found for x/y/z')
+
+            print(f'Found coordinate keys: {keys}')
+
+            data = df[keys].values
+
+        elif ext == 'npy':
+            data = np.load(path)
+
+        else:
+            data = None
+            return
+
+        # Deal with NaNs
+        if np.any(np.isnan(data)):
+            print('WARNING: coordinates contain NaN values')
+            data = data[~np.any(np.isnan(data), axis=1), :]
+
+        self.add_roi_set(data, name=path)
+
+    def add_roi_set(self, data: np.ndarray, name: str = None):
+
+        if name is None:
+            name = f'ROI set {self.item_count}'
+            self.item_count += 1
+
+        if '/' in name:
+            name_short = name.split('/')[-1]
+        elif '\\' in name:
+            name_short = name.split('\\')[-1]
+        else:
+            name_short = name
+
+        # Add tree item
+        tree_item = QtWidgets.QTreeWidgetItem(self.tree_widget)
+        tree_item.setToolTip(0, name)
+        tree_item.name = name
+        tree_item.coordinates = data
+        self.tree_widget.addTopLevelItem(tree_item)
+        # Start color
+        color = cc.glasbey_hv[np.random.randint(len(cc.glasbey_hv))]
+        tree_item.color = QtGui.QColor.fromRgbF(*color, 0.5)
+
+        label = QtWidgets.QLabel(name_short, self.tree_widget)
+        self.tree_widget.setItemWidget(tree_item, 0, label)
+
+        # Add select button
+        select_btn = QtWidgets.QPushButton('show')
+        select_btn.setContentsMargins(0, 0, 0, 0)
+        select_btn.clicked.connect(lambda: self.toggle_item(tree_item))
+        self.tree_widget.setItemWidget(tree_item, 1, select_btn)
+
+        # Add colorpicker button
+        color_btn = QtWidgets.QPushButton(f' ')
+        color_btn.setContentsMargins(0, 0, 0, 0)
+        color_btn.clicked.connect(lambda: self.open_colorpicker(tree_item))
+        self.tree_widget.setItemWidget(tree_item, 2, color_btn)
+
+        # Emit item added signal
+        self.sig_item_added.emit(tree_item)
+
+        # Toggle on by default
+        self.toggle_item(tree_item)
+
+    def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        # Add item
+        if tree_item not in self.selected_items:
+
+            self.selected_items.append(tree_item)
+
+            # Set select button
+            select_btn = self.tree_widget.itemWidget(tree_item, 1)
+            select_btn.setText('hide')
+
+            # Enable color picker button
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setDisabled(False)
+
+            # Emit signal
+            self.sig_item_shown.emit(tree_item)
+
+        # Remove item
+        else:
+
+            # Update label
+            label = self.tree_widget.itemWidget(tree_item, 0)
+            label.setStyleSheet('')
+
+            # Update select button
+            select_btn = self.tree_widget.itemWidget(tree_item, 1)
+            select_btn.setText('show')
+
+            # Update color picker button
+            color_btn = self.tree_widget.itemWidget(tree_item, 2)
+            color_btn.setStyleSheet('')
+            color_btn.setDisabled(True)
+
+            # Remove item
+            self.selected_items.remove(tree_item)
+
+            # Emit signal
+            self.sig_item_hidden.emit(tree_item)
+
+    def open_colorpicker(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        new_color = QtWidgets.QColorDialog().getColor(initial=tree_item.color,
+                                                      options=QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel)
+
+        if new_color.isValid():
+            tree_item.color = new_color
+            self.sig_item_color_changed.emit(tree_item)
+
+    def update_color_btn(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        color = tree_item.color
+        color_btn = self.tree_widget.itemWidget(tree_item, 2)
+
+        if color_btn.isEnabled():
+            color_btn.setStyleSheet(f'background-color: rgba{color.getRgb()};')
+        else:
+            color_btn.setStyleSheet('')
+
+
 def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: List[str] = None):
-    global window
 
     print('Open window')
 
@@ -1153,7 +795,7 @@ def run(points: Union[List, np.ndarray] = None, marker: str = None, regions: Lis
 
     app = pg.mkQApp()
 
-    window = Window(points=points, marker=marker, regions=regions)
+    win = Window(points=points, marker=marker, regions=regions)
 
     pg.exec()
 
