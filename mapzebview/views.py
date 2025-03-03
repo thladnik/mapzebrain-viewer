@@ -332,35 +332,34 @@ class VolumeView(gl.GLViewWidget):
         self.transverse_plane.resetTransform()
         self.transverse_plane.translate(0, current_idx, 0)
 
-    def add_scatter(self, tree_item: QtWidgets.QTreeWidgetItem):
+    def update_scatter(self):
 
-        name = tree_item.name
+        # Hide all items
+        for scatter_item in self.scatter_items.values():
+            scatter_item.hide()
 
-        if name not in self.scatter_items:
-            scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pxMode=False)
-            scatter_item .setGLOptions('additive')
-            self.addItem(scatter_item)
-            self.scatter_items[name] = scatter_item
+        # Go through all the ones that should be displayed
+        for name, roi_tree_item in config.roi_set_items.items():
+            print(f'Update {name}')
 
-        scatter_item = self.scatter_items[name]
+            if name not in self.scatter_items:
+                coordinates = roi_tree_item.coordinates.copy()
+                coordinates[:, 0] = self.volume_bounds[0] - coordinates[:, 0]
 
-        points = tree_item.coordinates.copy()
-        points[:, 0] = self.volume_bounds[0] - points[:, 0]
-        scatter_item.setData(pos=points, color=tree_item.color.getRgbF())
+                scatter_item = gl.GLScatterPlotItem(size=5, color=(1., 1., 1., 1.0), pos=coordinates, pxMode=False)
+                scatter_item .setGLOptions('additive')
+                self.addItem(scatter_item)
+                self.scatter_items[name] = scatter_item
 
-    def update_scatter_color(self, tree_item: QtWidgets.QTreeWidgetItem):
-        name = tree_item.name
-        if name not in self.scatter_items:
-            return
-        scatter_item = self.scatter_items[name]
-        scatter_item.setData(color=tree_item.color.getRgbF())
-
-    def remove_scatter(self, tree_item: QtWidgets.QTreeWidgetItem):
-        name = tree_item.name
-        if name in self.scatter_items:
             scatter_item = self.scatter_items[name]
-            self.removeItem(scatter_item)
-            del self.scatter_items[name]
+
+            # Set color
+            color = roi_tree_item.color
+            print(f'Set color {color.getRgbF()}')
+            scatter_item.setData(color=color.getRgbF())
+
+            # Show
+            scatter_item.show()
 
     def update_regions(self):
 
@@ -370,7 +369,7 @@ class VolumeView(gl.GLViewWidget):
         for i, (name, (_, region_mesh)) in enumerate(config.regions.items()):
 
             if name not in self.mesh_items:
-                vecs = region_mesh.vectors
+                vecs = region_mesh.vectors.copy()
                 # Invert X for GL view
                 vecs[:, :, 0] = self.volume_bounds[0] - vecs[:, :, 0]
 
@@ -444,7 +443,7 @@ class PrettyView(QtWidgets.QWidget):
 
         # pos_marker_color = (200 / 255, 200 / 255, 100 / 255)
         pos_marker_color = (0 / 255, 0 / 255, 0 / 255)
-        pos_marker_linewidth = 1.5
+        pos_marker_linewidth = 1.
 
         # Add lines
         self.xline, = self.ax.plot(*np.zeros((3, 2)), color=pos_marker_color, linewidth=pos_marker_linewidth)
@@ -462,12 +461,16 @@ class PrettyView(QtWidgets.QWidget):
         self.update_current_position()
         self.set_view(azim=camera_params['azimuth'], elev=camera_params['elevation'])
         self.update_regions()
+        self.update_rois()
 
     def update_regions(self):
 
         for name, (_, region_mesh) in config.regions.items():
             if name not in self.region_items:
-                coll = Poly3DCollection(region_mesh.vectors, facecolors='black', edgecolors='none')
+                vecs = region_mesh.vectors.copy()
+                # Invert X for GL view
+                vecs[:, :, 0] = config.marker_image.shape[0] - vecs[:, :, 0]
+                coll = Poly3DCollection(vecs, facecolors='black', edgecolors='none')
                 self.ax.add_collection3d(coll)
                 self.region_items[name] = coll
 
@@ -477,6 +480,16 @@ class PrettyView(QtWidgets.QWidget):
             # Set to lower alpha value
             coll.set_facecolor((*color[:3], color[3] / 10))
 
+        self.fig_canvas.draw()
+
+    def update_rois(self):
+
+        for name, roi_tree_item in config.roi_set_items.items():
+            coordinates = roi_tree_item.coordinates.copy()
+            coordinates[:, 0] = config.marker_image.shape[0] - coordinates[:, 0]
+            color = roi_tree_item.color
+
+            self.ax.scatter(*coordinates.T, s=3, c=[color.getRgbF()], edgecolor='none')
         self.fig_canvas.draw()
 
     def update_current_position(self):
@@ -528,11 +541,6 @@ class PrettyView(QtWidgets.QWidget):
             raise ValueError('Azimuth and elevation need to be set')
 
         self.ax.view_init(azim=azim, elev=elev)
-        self.fig_canvas.draw()
-
-    def add_dots(self):
-
-        self.ax.scatter(*np.random.normal(size=(3, 50)))
         self.fig_canvas.draw()
 
     def save_to_file(self):

@@ -118,11 +118,11 @@ class Window(QtWidgets.QMainWindow):
         self.panel.roi_list.sig_item_hidden.connect(self.transverse_view.remove_scatter)
 
         # Volumetric view
-        self.panel.roi_list.sig_item_added.connect(self.volume_view.add_scatter)
-        self.panel.roi_list.sig_item_shown.connect(self.volume_view.add_scatter)
-        self.panel.roi_list.sig_item_color_changed.connect(self.volume_view.update_scatter_color)
-        self.panel.roi_list.sig_item_removed.connect(self.volume_view.remove_scatter)
-        self.panel.roi_list.sig_item_hidden.connect(self.volume_view.remove_scatter)
+        self.panel.roi_list.sig_item_added.connect(self.volume_view.update_scatter)
+        self.panel.roi_list.sig_item_shown.connect(self.volume_view.update_scatter)
+        self.panel.roi_list.sig_item_color_changed.connect(self.volume_view.update_scatter)
+        self.panel.roi_list.sig_item_removed.connect(self.volume_view.update_scatter)
+        self.panel.roi_list.sig_item_hidden.connect(self.volume_view.update_scatter)
 
         marker_catalog_path = os.path.join(config.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
@@ -600,7 +600,7 @@ class RoiWidget(QtWidgets.QGroupBox):
             ext = url.fileName().split('.')[-1]
 
             if ext in ['h5', 'hdf5', 'npy', 'json', 'csv']:
-                self.load_roi_data(url.path().strip('/'))
+                self.add_roi_set(data=url.path().strip('/'))
             else:
                 print(f'WARNING: unknown file type {ext}')
 
@@ -663,15 +663,15 @@ class RoiWidget(QtWidgets.QGroupBox):
             else:
                 keys = []
                 for _n in ['x', 'y', 'z']:
-                    _keys = [k for k in data.keys() if _n in k]
+                    _keys = [k.lower() for k in data.keys() if _n in k]
                     if len(_keys) > 0:
                         keys.append(_keys[0])
 
-                if len(keys) == 0:
+                if len(keys) != 3:
                     raise KeyError('No matching coordinate keys found for x/y/z')
 
             data = data[keys].values
-            print(f'Found coordinate keys: {keys}')
+            print(f'Found coordinate keys: {keys} for axes x/y/z respectively')
 
         # Deal with NaNs
         if np.any(np.isnan(data)):
@@ -727,6 +727,7 @@ class RoiWidget(QtWidgets.QGroupBox):
         if tree_item not in self.selected_items:
 
             self.selected_items.append(tree_item)
+            config.roi_set_items[tree_item.name] = tree_item
 
             # Set select button
             select_btn = self.tree_widget.itemWidget(tree_item, 1)
@@ -757,6 +758,7 @@ class RoiWidget(QtWidgets.QGroupBox):
 
             # Remove item
             self.selected_items.remove(tree_item)
+            del config.roi_set_items[tree_item.name]
 
             # Emit signal
             self.sig_item_hidden.emit(tree_item)
@@ -781,7 +783,7 @@ class RoiWidget(QtWidgets.QGroupBox):
             color_btn.setStyleSheet('')
 
 
-def run(rois: Union[List, np.ndarray] = None, marker: str = None, regions: List[str] = None):
+def run(rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None, marker: str = None, regions: List[str] = None):
 
     print('Open window')
 

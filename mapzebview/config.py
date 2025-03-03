@@ -5,7 +5,7 @@ from typing import Dict, TYPE_CHECKING, Tuple, Union
 
 import numpy as np
 import stl
-from pyqtgraph.Qt import QtGui
+from pyqtgraph.Qt import QtGui, QtWidgets
 
 if TYPE_CHECKING:
     from main import Window
@@ -20,8 +20,7 @@ marker_image: Union[np.ndarray, None] = None
 regions: Dict[str, Tuple[np.ndarray, Union[None, stl.Mesh]]] = {}
 region_colors: Dict[str, QtGui.QColor] = {}
 
-roi_sets: Dict[str, np.ndarray] = {}
-roi_set_colors: Dict[str, QtGui.QColor] = {}
+roi_set_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
 
 
 def marker_path():
