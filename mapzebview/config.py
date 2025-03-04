@@ -10,7 +10,7 @@ from pyqtgraph.Qt import QtGui, QtWidgets
 if TYPE_CHECKING:
     from main import Window
 
-
+use_pretty_plots: bool = False
 default_marker_name = 'jf5Tg'
 debug: bool = False
 window: Union[Window, None] = None

@@ -10,8 +10,8 @@ import colorcet as cc
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-import stl
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+import stl
 import tifffile
 
 from mapzebview import config
@@ -22,7 +22,10 @@ try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 except ImportError:
+    config.use_pretty_plots = False
     print('Matplotlib not installed. No pretty view export available')
+else:
+    config.use_pretty_plots = True
 
 
 class Window(QtWidgets.QMainWindow):
@@ -284,6 +287,7 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.layout().addWidget(self.roi_list)
 
         self.export_to_image_btn = QtWidgets.QPushButton('Export view to image')
+        self.export_to_image_btn.setEnabled(config.use_pretty_plots)
         self.export_to_image_btn.clicked.connect(self.open_pretty_view)
         self.layout().addWidget(self.export_to_image_btn)
 
@@ -790,6 +794,10 @@ def run(rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.Dat
     # Interpret image data as row-major instead of col-major
     pg.setConfigOptions(imageAxisOrder='row-major')
 
+    # Instantiate backend first
+    # QtWidgets.QApplication(sys.argv)
+
+    # Create pyqtgraph app instance
     app = pg.mkQApp()
 
     win = Window(rois=rois, marker=marker, regions=regions)

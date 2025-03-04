@@ -5,12 +5,16 @@ from typing import Dict
 
 import numpy as np
 import pyqtgraph as pg
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pyqtgraph import Vector, opengl as gl
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from mapzebview import config
+
+try:
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+except ImportError:
+    pass
 
 
 class SecionView(pg.ImageView):
@@ -340,7 +344,6 @@ class VolumeView(gl.GLViewWidget):
 
         # Go through all the ones that should be displayed
         for name, roi_tree_item in config.roi_set_items.items():
-            print(f'Update {name}')
 
             if name not in self.scatter_items:
                 coordinates = roi_tree_item.coordinates.copy()
@@ -355,7 +358,6 @@ class VolumeView(gl.GLViewWidget):
 
             # Set color
             color = roi_tree_item.color
-            print(f'Set color {color.getRgbF()}')
             scatter_item.setData(color=color.getRgbF())
 
             # Show
