@@ -1,10 +1,18 @@
 # mapzebrain-viewer
-Graphical user interface for viewing the [MapZeBrain atlas](https://mapzebrain.org/) and ROIs registered to the atlas in Python.
+Graphical user interface for viewing markers and regions of the [MapZeBrain atlas](https://mapzebrain.org/) - for quick and simple visualization of ROI locations against the atlas data in Python. 
+This viewer uses the provided MapZeBrain API, but is not affiliated with the project in any way.
+
+![image](https://github.com/user-attachments/assets/9ac8bc19-f066-4376-ba53-1c8b26170aac)
+
+It enables the export of anatomical images for different views, while using `matplotlib` for keeping with the style of other publication figures:
+![image](https://github.com/user-attachments/assets/41eb1bc7-f755-4cde-8bc2-4dc650e5557e)
+
+
 
 ## Installation
 Run `pip install git+https://github.com/thladnik/mapzebrain-viewer` in your Python environment.
 
-In order to enable export of pretty `matplotlib` renderings of the data, either run `pip install matplotlib` or install mapzebview with optional dependencies `pip install git+https://github.com/thladnik/mapzebrain-viewer[pretty]` 
+In order to enable exports of pretty `matplotlib` renderings of the data, either run `pip install matplotlib` or install mapzebview with optional dependencies `pip install git+https://github.com/thladnik/mapzebrain-viewer[pretty]` 
 
 
 ## Usage
