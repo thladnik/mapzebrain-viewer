@@ -34,7 +34,7 @@ region_structure = {
                 'dorsal habenula': 2.0,
                 'ventral habenula': 2.0
             },
-            'thalamus proper': {
+            'dorsal thalamus proper': {
                 'retinal arborization field 4': 2.0
             }
         },
@@ -51,7 +51,7 @@ region_structure = {
         }
     },
     'mesencephalon (midbrain)': {
-        'tegmentum (midbrain tegmentum)': {
+        'tegmentum': {
             'medial tegmentum (entire)': {
                 'medial tegmentum (remaining)': 2.0,
                 'oculomotor nucleus': 2.0

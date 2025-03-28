@@ -27,16 +27,15 @@ except ImportError:
 else:
     config.use_pretty_plots = True
 
+win = None
+app = None
+
 
 class Window(QtWidgets.QMainWindow):
-
     sig_regions_updated = QtCore.Signal()
     sig_marker_image_updated = QtCore.Signal()
 
-    def __init__(self,
-                 marker: str = None,
-                 regions: List[str] = None,
-                 rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None):
+    def __init__(self):
         QtWidgets.QMainWindow.__init__(self)
         self.resize(1600, 800)
         self.setWindowTitle('MapZeBrain Viewer')
@@ -137,6 +136,11 @@ class Window(QtWidgets.QMainWindow):
         markers_catalog = json.load(open(marker_catalog_path, 'r'))
         self.marker_structure = {d['name']: d['stack'] for d in markers_catalog}
 
+    def set_parameters(self,
+                       marker: str = None,
+                       regions: List[str] = None,
+                       rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None):
+
         # Make sure marker line is set
         if marker is None:
             marker = config.default_marker_name
@@ -148,7 +152,7 @@ class Window(QtWidgets.QMainWindow):
         # If regions are pre-set, add them
         if regions is not None:
             for r in regions:
-                self.panel.region_tree.select_exact_match_in_tree(r)
+                self.panel.region_tree.select_exact_match_in_tree(r, only_toggle_on=True)
 
         # If ROIs are pre-set, add those
         if rois is not None:
@@ -263,7 +267,6 @@ class Window(QtWidgets.QMainWindow):
 
 
 class ControlPanel(QtWidgets.QGroupBox):
-
     sig_region_color_changed = QtCore.Signal(str, QtGui.QColor)
     sig_roi_data_changed = QtCore.Signal()
 
@@ -292,7 +295,6 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.layout().addWidget(self.export_to_image_btn)
 
     def open_pretty_view(self):
-
         if self.pretty_view is not None:
             self.pretty_view.close()
 
@@ -314,7 +316,6 @@ class ControlPanel(QtWidgets.QGroupBox):
 
 
 class RegionTreeWidget(QtWidgets.QWidget):
-
     ContinuousIdRole = 40
     UniqueNameRole = 50
     ColorRole = 60
@@ -359,7 +360,7 @@ class RegionTreeWidget(QtWidgets.QWidget):
         self.item_count = 0
 
         # Recursive build function
-        def _build_tree(name: str, data: dict, parent_item = None):
+        def _build_tree(name: str, data: dict, parent_item=None):
             parent_item = parent_item if parent_item is not None else self.tree_widget
 
             # Add tree item
@@ -436,7 +437,7 @@ class RegionTreeWidget(QtWidgets.QWidget):
         for i in range(self.tree_widget.topLevelItemCount()):
             _find_text_in_item(self.tree_widget.topLevelItem(i), False)
 
-    def select_exact_match_in_tree(self, search_text: str):
+    def select_exact_match_in_tree(self, search_text: str, only_toggle_on: bool = False):
 
         def _find_item_in_tree(item: QtWidgets.QTreeWidgetItem) -> Union[QtWidgets.QTreeWidgetItem, None]:
 
@@ -461,12 +462,12 @@ class RegionTreeWidget(QtWidgets.QWidget):
             final_ret = _find_item_in_tree(self.tree_widget.topLevelItem(i))
 
             if final_ret is not None:
-                self.toggle_item(final_ret)
+                self.toggle_item(final_ret, only_toggle_on=only_toggle_on)
                 # Search tree to cause selected item to expand
                 self.search_tree('')
                 break
 
-    def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
+    def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem, only_toggle_on: bool = False):
 
         # Add item
         if tree_item not in self.selected_items:
@@ -489,27 +490,32 @@ class RegionTreeWidget(QtWidgets.QWidget):
             # Emit signal
             self.sig_item_selected.emit(tree_item)
 
+            return
+
+        # Skip remove, if only toggle on
+        if only_toggle_on:
+            return
+
         # Remove item
-        else:
 
-            # Update label
-            label = self.tree_widget.itemWidget(tree_item, 0)
-            label.setStyleSheet('')
+        # Update label
+        label = self.tree_widget.itemWidget(tree_item, 0)
+        label.setStyleSheet('')
 
-            # Update select button
-            select_btn = self.tree_widget.itemWidget(tree_item, 1)
-            select_btn.setText('show')
+        # Update select button
+        select_btn = self.tree_widget.itemWidget(tree_item, 1)
+        select_btn.setText('show')
 
-            # Update color picker button
-            color_btn = self.tree_widget.itemWidget(tree_item, 2)
-            color_btn.setStyleSheet('')
-            color_btn.setDisabled(True)
+        # Update color picker button
+        color_btn = self.tree_widget.itemWidget(tree_item, 2)
+        color_btn.setStyleSheet('')
+        color_btn.setDisabled(True)
 
-            # Remove item
-            self.selected_items.remove(tree_item)
+        # Remove item
+        self.selected_items.remove(tree_item)
 
-            # Emit signal
-            self.sig_item_removed.emit(tree_item)
+        # Emit signal
+        self.sig_item_removed.emit(tree_item)
 
     def open_colorpicker(self, tree_item: QtWidgets.QTreeWidgetItem):
 
@@ -544,7 +550,6 @@ class RegionTreeWidget(QtWidgets.QWidget):
 
 
 class RoiWidget(QtWidgets.QGroupBox):
-
     sig_path_added = QtCore.Signal(str)
     sig_item_shown = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_hidden = QtCore.Signal(QtWidgets.QTreeWidgetItem)
@@ -616,18 +621,7 @@ class RoiWidget(QtWidgets.QGroupBox):
             if current_item is None:
                 return
 
-            # Delete item
-            print(f'Delete ROI set {current_item.text(0)}')
-
-            # Remove from selection list
-            if current_item in self.selected_items:
-                self.selected_items.remove(current_item)
-
-            # Remove from tree
-            self.tree_widget.invisibleRootItem().removeChild(current_item)
-
-            # Emit item removed signal
-            self.sig_item_removed.emit(current_item)
+            self.remove_item(current_item)
 
         QtWidgets.QGroupBox.keyPressEvent(self, event)
 
@@ -694,6 +688,16 @@ class RoiWidget(QtWidgets.QGroupBox):
         else:
             name_short = name
 
+        # Check if tree item with same name exists already
+        color = None
+        for i in range(self.tree_widget.topLevelItemCount()):
+            _item = self.tree_widget.topLevelItem(i)
+            if name == _item.name:
+                # Remove current item and keep last color
+                color = _item.color
+                self.remove_item(_item)
+                break
+
         # Add tree item
         tree_item = QtWidgets.QTreeWidgetItem(self.tree_widget)
         tree_item.setToolTip(0, name)
@@ -701,8 +705,9 @@ class RoiWidget(QtWidgets.QGroupBox):
         tree_item.coordinates = data
         self.tree_widget.addTopLevelItem(tree_item)
         # Start color
-        color = cc.glasbey_hv[np.random.randint(len(cc.glasbey_hv))]
-        tree_item.color = QtGui.QColor.fromRgbF(*color, 0.5)
+        if color is None:
+            color = QtGui.QColor.fromRgbF(*cc.glasbey_hv[np.random.randint(len(cc.glasbey_hv))], 0.5)
+        tree_item.color = color
 
         label = QtWidgets.QLabel(name_short, self.tree_widget)
         self.tree_widget.setItemWidget(tree_item, 0, label)
@@ -725,6 +730,22 @@ class RoiWidget(QtWidgets.QGroupBox):
         # Toggle on by default
         self.toggle_item(tree_item)
 
+    def remove_item(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        # Delete item
+        print(f'Delete ROI set {tree_item.name}')
+
+        # Remove from selection list
+        if tree_item in self.selected_items:
+            self.selected_items.remove(tree_item)
+            del config.roi_set_items[tree_item.name]
+
+        # Remove from tree
+        self.tree_widget.invisibleRootItem().removeChild(tree_item)
+
+        # Emit item removed signal
+        self.sig_item_removed.emit(tree_item)
+
     def toggle_item(self, tree_item: QtWidgets.QTreeWidgetItem):
 
         # Add item
@@ -744,7 +765,7 @@ class RoiWidget(QtWidgets.QGroupBox):
             # Emit signal
             self.sig_item_shown.emit(tree_item)
 
-        # Remove item
+        # Hide item
         else:
 
             # Update label
@@ -787,7 +808,10 @@ class RoiWidget(QtWidgets.QGroupBox):
             color_btn.setStyleSheet('')
 
 
-def run(rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None, marker: str = None, regions: List[str] = None):
+def run(rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]] = None,
+        marker: str = None,
+        regions: List[str] = None):
+    global win
 
     print('Open window')
 
@@ -798,16 +822,17 @@ def run(rois: Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.Dat
     # QtWidgets.QApplication(sys.argv)
 
     # Create pyqtgraph app instance
+    # app_name = f'mapzebview_{"".join([str(s) for s in np.random.randint(10, size=(10,))])}'
     app = pg.mkQApp()
 
-    win = Window(rois=rois, marker=marker, regions=regions)
+    # print(f'Run {app_name}')
+    if win is None:
+        win = Window()
 
-    pg.exec()
+    win.set_parameters(rois=rois, marker=marker, regions=regions)
+
+    app.exec()
 
 
 if __name__ == '__main__':
-
     run()
-
-
-

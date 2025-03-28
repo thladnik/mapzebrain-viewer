@@ -269,7 +269,7 @@ class VolumeView(gl.GLViewWidget):
     plane_thickness = 3
 
     def __init__(self, parent):
-        gl.GLViewWidget.__init__(self, parent=parent)
+        gl.GLViewWidget.__init__(self, parent=parent, rotationMethod='euler')
         self.opts['fov'] = 1.
 
         sag_data = np.ones((1, 100, 100, 4)) * self.plane_color[None, None, None, :]
@@ -286,6 +286,45 @@ class VolumeView(gl.GLViewWidget):
         self.transverse_plane = gl.GLVolumeItem(trans_data)
         self.transverse_plane.setGLOptions('additive')
         self.addItem(self.transverse_plane)
+
+    def keyPressEvent(self, ev: QtGui.QKeyEvent):
+
+        accelerate = QtGui.Qt.KeyboardModifier.ShiftModifier in ev.modifiers()
+
+        # Translate
+        step_size = 1
+        if ev.key() in (QtCore.Qt.Key.Key_W, QtCore.Qt.Key.Key_A,
+                        QtCore.Qt.Key.Key_S, QtCore.Qt.Key.Key_D):
+            x = y = 0
+            if ev.key() == QtCore.Qt.Key.Key_W:
+                y -= step_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_S:
+                y += step_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_A:
+                x -= step_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_D:
+                x += step_size + accelerate * 5
+
+            self.pan(x, y, 0, relative='view')
+
+        # Rotate
+        rot_size = 1
+        if ev.key() in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_E,
+                        QtCore.Qt.Key.Key_R, QtCore.Qt.Key.Key_F):
+
+            a = e = 0
+            if ev.key() == QtCore.Qt.Key.Key_Q:
+                a -= rot_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_E:
+                a += rot_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_R:
+                e += rot_size + accelerate * 5
+            if ev.key() == QtCore.Qt.Key.Key_F:
+                e -= rot_size + accelerate * 5
+
+            self.orbit(a, e)
+
+        gl.GLViewWidget.keyPressEvent(self, ev)
 
     def marker_image_updated(self):
 
