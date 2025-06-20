@@ -288,8 +288,7 @@ class VolumeView(gl.GLViewWidget):
         self.addItem(self.transverse_plane)
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
-
-        accelerate = QtGui.Qt.KeyboardModifier.ShiftModifier in ev.modifiers()
+        accelerate = QtCore.Qt.KeyboardModifier.ShiftModifier in ev.modifiers()
 
         # Translate
         step_size = 1
