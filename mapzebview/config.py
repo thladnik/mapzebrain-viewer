@@ -21,6 +21,7 @@ regions: Dict[str, Tuple[np.ndarray, Union[None, stl.Mesh]]] = {}
 region_colors: Dict[str, QtGui.QColor] = {}
 
 roi_set_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
+map_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
 
 
 def marker_path():

@@ -35,9 +35,11 @@ class SecionView(pg.ImageView):
         self.ui.menuBtn.hide()
 
         # Add region image item
-        self.region_image_items = {}
+        self.region_image_items: Dict[str, pg.ImageItem] = {}
         self.scatter_items: Dict[str, pg.ScatterPlotItem] = {}
         self.scatter_coordinates: Dict[str, np.ndarray] = {}
+        self.map_items: Dict[str, pg.ImageItem] = {}
+        self.map_data: Dict[str, np.ndarray] = {}
 
         # Add lines
         self.vline = VerticalLine(self)
@@ -50,6 +52,7 @@ class SecionView(pg.ImageView):
         self.sigTimeChanged.connect(self.time_changed)
         self.sig_index_changed.connect(self.update_regions)
         self.sig_index_changed.connect(self.update_scatter)
+        # self.sig_index_changed.connect(self.update_map)
 
     @abstractmethod
     def get_region_slice(self, region: np.ndarray):
@@ -57,6 +60,10 @@ class SecionView(pg.ImageView):
 
     @abstractmethod
     def get_coordinate_slice(self, points: np.ndarray) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def get_map_slice(self, data: np.ndarray) -> np.ndarray:
         pass
 
     @abstractmethod
@@ -123,6 +130,24 @@ class SecionView(pg.ImageView):
 
         self.update_scatter()
 
+    def add_map(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        name = tree_item.name
+
+        if name not in self.map_items:
+            # Add scatter plot item for ROI display
+            image_item = pg.ImageItem()
+            image_item.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_ColorDodge)
+            self.view.addItem(image_item)
+            self.map_items[name] = image_item
+            self.map_data[name] = tree_item.map_data
+
+            color = tree_item.color
+            cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], color], linearize=True)
+            image_item.setColorMap(cmap)
+
+        self.update_map()
+
     def update_scatter(self):
 
         for name in self.scatter_items:
@@ -132,6 +157,47 @@ class SecionView(pg.ImageView):
 
             data_slice = self.get_coordinate_slice(scatter_coordinates)
             scatter_item.setData(*data_slice.T)
+
+    def update_map(self):
+
+        # for name in self.map_items:
+        #
+        #     map_item = self.map_items[name]
+        #     map_data = self.map_data[name]
+        #
+        #     data_slice = self.get_map_slice(map_data)
+        #     map_item.setImage(data_slice)
+
+        # Hide all
+        for image_item in self.region_image_items.values():
+            image_item.hide()
+
+        # Update all
+        for i, (name, data) in enumerate(self.map_data.items()):
+
+            image_item = self.map_items.get(name)
+
+            # Create
+            if image_item is None:
+                image_item = pg.ImageItem()
+                image_item.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_ColorDodge)
+                self.view.addItem(image_item)
+                self.region_image_items[name] = image_item
+
+            data_slice = self.get_map_slice(data)
+            image_item.setImage(data_slice)
+            image_item.show()
+
+    def update_map_color(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        name = tree_item.name
+
+        if name not in self.map_items:
+            return
+
+        image_item = self.map_items[name]
+        cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], tree_item.color], linearize=True)
+        image_item.setColorMap(cmap)
 
     def update_scatter_color(self, tree_item: QtWidgets.QTreeWidgetItem):
 
@@ -180,6 +246,9 @@ class SaggitalView(SecionView):
 
         return data_slice
 
+    def get_map_slice(self, data: np.ndarray) -> np.ndarray:
+        return np.swapaxes(data[self.currentIndex, :, :], 0, 1)[::-1, :]
+
     def ymax(self):
         return config.marker_image.shape[2]
 
@@ -200,6 +269,9 @@ class CoronalView(SecionView):
 
         return data_slice
 
+    def get_map_slice(self, data: np.ndarray) -> np.ndarray:
+        return data[::-1, :, self.currentIndex]
+
     def ymax(self):
         return config.marker_image.shape[0]
 
@@ -219,6 +291,9 @@ class TransversalView(SecionView):
         data_slice[:, 1] = config.marker_image.shape[2] - data_slice[:, 1]
 
         return data_slice
+
+    def get_map_slice(self, data: np.ndarray) -> np.ndarray:
+        return np.swapaxes(data[:, self.currentIndex, :], 0, 1)[::-1, :]
 
     def ymax(self):
         return config.marker_image.shape[2]
@@ -263,6 +338,8 @@ class VolumeView(gl.GLViewWidget):
 
     mesh_items: Dict[str, gl.GLMeshItem] = {}
     scatter_items: Dict[str, gl.GLScatterPlotItem] = {}
+    map_data: Dict[str, np.ndarray] = {}
+    map_items: Dict[str, gl.GLVolumeItem] = {}
 
     volume_bounds: np.ndarray = None
     plane_color = np.array([200, 200, 100, 5])
@@ -430,6 +507,43 @@ class VolumeView(gl.GLViewWidget):
 
             # Reduce alpha for volume view
             mesh_item.setColor((*color[:3], color[3] / 10))
+
+    def add_map(self, tree_item: QtWidgets.QTreeWidgetItem):
+
+        name = tree_item.name
+
+        self.map_data[name] = tree_item.map_data
+
+        self.update_maps()
+
+    def update_maps(self):
+
+        # for mesh_item in self.map_items.values():
+        #     mesh_item.hide()
+
+        for i, (name, data) in enumerate(self.map_data.items()):
+
+            if name not in self.map_items:
+
+                map_data = (np.repeat(data[::-1,:,:], 4, axis=-1) / 2**(8 * np.dtype(data.dtype).itemsize) * 255)
+                map_data[:,:,:,:3] *= np.array([1.0, 0.0, 0.0])[None, None, None, :]
+                map_data[:,:,:,-1] = 255 // 10
+                map_item = gl.GLVolumeItem(map_data.astype(np.uint8))
+                map_item.setGLOptions('additive')
+                self.addItem(map_item)
+                self.map_items[name] = map_item
+
+            map_item = self.map_items[name]
+
+            # Show mesh
+            map_item.show()
+
+            # Set color
+            # color = config.region_colors[name].getRgbF()
+
+            # Reduce alpha for volume view
+            # cmap = pg.ColorMap(pos=[0., 1.], color=[[0, 0, 0], tree_item.color], linearize=True)
+            # map_item.setColorMap(cmap)
 
 
 class PrettyView(QtWidgets.QWidget):

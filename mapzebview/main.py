@@ -99,32 +99,39 @@ class Window(QtWidgets.QMainWindow):
 
         # Connect scatter plot updates
         # Saggital view
-        self.panel.roi_list.sig_item_added.connect(self.saggital_view.add_scatter)
-        self.panel.roi_list.sig_item_shown.connect(self.saggital_view.add_scatter)
-        self.panel.roi_list.sig_item_color_changed.connect(self.saggital_view.update_scatter_color)
-        self.panel.roi_list.sig_item_removed.connect(self.saggital_view.remove_scatter)
-        self.panel.roi_list.sig_item_hidden.connect(self.saggital_view.remove_scatter)
+        self.panel.roi_widget.sig_item_added.connect(self.saggital_view.add_scatter)
+        self.panel.roi_widget.sig_item_shown.connect(self.saggital_view.add_scatter)
+        self.panel.roi_widget.sig_item_color_changed.connect(self.saggital_view.update_scatter_color)
+        self.panel.roi_widget.sig_item_removed.connect(self.saggital_view.remove_scatter)
+        self.panel.roi_widget.sig_item_hidden.connect(self.saggital_view.remove_scatter)
+        self.panel.map_widget.sig_item_added.connect(self.saggital_view.add_map)
+        self.panel.map_widget.sig_item_color_changed.connect(self.saggital_view.update_map_color)
 
         # Coronal view
-        self.panel.roi_list.sig_item_added.connect(self.coronal_view.add_scatter)
-        self.panel.roi_list.sig_item_shown.connect(self.coronal_view.add_scatter)
-        self.panel.roi_list.sig_item_color_changed.connect(self.coronal_view.update_scatter_color)
-        self.panel.roi_list.sig_item_removed.connect(self.coronal_view.remove_scatter)
-        self.panel.roi_list.sig_item_hidden.connect(self.coronal_view.remove_scatter)
+        self.panel.roi_widget.sig_item_added.connect(self.coronal_view.add_scatter)
+        self.panel.roi_widget.sig_item_shown.connect(self.coronal_view.add_scatter)
+        self.panel.roi_widget.sig_item_color_changed.connect(self.coronal_view.update_scatter_color)
+        self.panel.roi_widget.sig_item_removed.connect(self.coronal_view.remove_scatter)
+        self.panel.roi_widget.sig_item_hidden.connect(self.coronal_view.remove_scatter)
+        self.panel.map_widget.sig_item_added.connect(self.coronal_view.add_map)
+        self.panel.map_widget.sig_item_color_changed.connect(self.coronal_view.update_map_color)
 
         # Transverse view
-        self.panel.roi_list.sig_item_added.connect(self.transverse_view.add_scatter)
-        self.panel.roi_list.sig_item_shown.connect(self.transverse_view.add_scatter)
-        self.panel.roi_list.sig_item_color_changed.connect(self.transverse_view.update_scatter_color)
-        self.panel.roi_list.sig_item_removed.connect(self.transverse_view.remove_scatter)
-        self.panel.roi_list.sig_item_hidden.connect(self.transverse_view.remove_scatter)
+        self.panel.roi_widget.sig_item_added.connect(self.transverse_view.add_scatter)
+        self.panel.roi_widget.sig_item_shown.connect(self.transverse_view.add_scatter)
+        self.panel.roi_widget.sig_item_color_changed.connect(self.transverse_view.update_scatter_color)
+        self.panel.roi_widget.sig_item_removed.connect(self.transverse_view.remove_scatter)
+        self.panel.roi_widget.sig_item_hidden.connect(self.transverse_view.remove_scatter)
+        self.panel.map_widget.sig_item_added.connect(self.transverse_view.add_map)
+        self.panel.map_widget.sig_item_color_changed.connect(self.transverse_view.update_map_color)
 
         # Volumetric view
-        self.panel.roi_list.sig_item_added.connect(self.volume_view.update_scatter)
-        self.panel.roi_list.sig_item_shown.connect(self.volume_view.update_scatter)
-        self.panel.roi_list.sig_item_color_changed.connect(self.volume_view.update_scatter)
-        self.panel.roi_list.sig_item_removed.connect(self.volume_view.update_scatter)
-        self.panel.roi_list.sig_item_hidden.connect(self.volume_view.update_scatter)
+        self.panel.roi_widget.sig_item_added.connect(self.volume_view.update_scatter)
+        self.panel.roi_widget.sig_item_shown.connect(self.volume_view.update_scatter)
+        self.panel.roi_widget.sig_item_color_changed.connect(self.volume_view.update_scatter)
+        self.panel.roi_widget.sig_item_removed.connect(self.volume_view.update_scatter)
+        self.panel.roi_widget.sig_item_hidden.connect(self.volume_view.update_scatter)
+        self.panel.map_widget.sig_item_added.connect(self.volume_view.add_map)
 
         marker_catalog_path = os.path.join(config.marker_path(), 'markers_catalog.json')
         if not os.path.exists(marker_catalog_path):
@@ -160,7 +167,7 @@ class Window(QtWidgets.QMainWindow):
                 rois = {None: rois}
 
             for name, data in rois.items():
-                self.panel.roi_list.add_roi_set(data=data, name=name)
+                self.panel.roi_widget.add_roi_set(data=data, name=name)
 
         # Show
         self.show()
@@ -170,6 +177,8 @@ class Window(QtWidgets.QMainWindow):
         if not config.debug:
             print(f'Set marker to {name}')
             config.marker_image = self.load_marker(name)
+
+            print(config.marker_image.shape)
 
         else:
             # Debug image:
@@ -286,8 +295,16 @@ class ControlPanel(QtWidgets.QGroupBox):
         self.region_tree.sig_item_color_changed.connect(self.region_color_changed)
         self.layout().addWidget(self.region_tree)
 
-        self.roi_list = RoiWidget(self)
-        self.layout().addWidget(self.roi_list)
+        self.tab_widget = QtWidgets.QTabWidget()
+        self.tab_widget.setMinimumHeight(200)
+        self.tab_widget.setMaximumHeight(300)
+        self.layout().addWidget(self.tab_widget)
+
+        self.roi_widget = RoiWidget(self)
+        self.tab_widget.addTab(self.roi_widget, 'ROIs')
+
+        self.map_widget = MapWidget(self)
+        self.tab_widget.addTab(self.map_widget, 'Maps')
 
         self.export_to_image_btn = QtWidgets.QPushButton('Export view to image')
         self.export_to_image_btn.setEnabled(config.use_pretty_plots)
@@ -549,7 +566,241 @@ class RegionTreeWidget(QtWidgets.QWidget):
         self.sig_item_color_changed.emit(tree_item)
 
 
-class RoiWidget(QtWidgets.QGroupBox):
+class MapItem(QtWidgets.QTreeWidgetItem):
+
+    def __init__(self, map_widget: MapWidget, name: str, shortname: str, data: np.ndarray, color: QtGui.QColor = None):
+        super().__init__()
+        self.map_widget = map_widget
+        self.shortname = shortname
+        self.name = name
+        self.map_data = data
+        self.color = color if color is not None else QtGui.QColor.fromRgbF(*cc.glasbey_hv[np.random.randint(len(cc.glasbey_hv))], 0.5)
+
+        # Set tooltip and label
+        self.setToolTip(0, self.name)
+        label = QtWidgets.QLabel(self.shortname, self.tree_widget)
+        self.tree_widget.setItemWidget(self, 0, label)
+
+        # Add select button
+        self.select_btn = QtWidgets.QPushButton('show')
+        self.select_btn.setContentsMargins(0, 0, 0, 0)
+        self.select_btn.clicked.connect(self.toggle_item)
+        self.tree_widget.setItemWidget(self, 1, self.select_btn)
+
+        # Add colorpicker button
+        self.color_btn = QtWidgets.QPushButton(f' ')
+        self.color_btn.setContentsMargins(0, 0, 0, 0)
+        self.color_btn.clicked.connect(self.open_colorpicker)
+        self.tree_widget.setItemWidget(self, 2, self.color_btn)
+
+    @property
+    def tree_widget(self):
+        return self.map_widget.tree_widget
+
+    def toggle_item(self):
+
+        # Add item
+        if self not in self.map_widget.selected_items:
+
+            self.map_widget.selected_items.append(self)
+
+            # Set select button
+            self.select_btn.setText('hide')
+
+            # Enable color picker button
+            self.color_btn.setDisabled(False)
+
+            # Emit signal
+            self.map_widget.sig_item_shown.emit(self)
+
+        # Hide item
+        else:
+
+            # Update label
+            label = self.tree_widget.itemWidget(self, 0)
+            label.setStyleSheet('')
+
+            # Update select button
+            self.select_btn.setText('show')
+
+            # Update color picker button
+            self.color_btn.setStyleSheet('')
+            self.color_btn.setDisabled(True)
+
+            # Remove item
+            self.map_widget.selected_items.remove(self)
+
+            # Emit signal
+            self.map_widget.sig_item_hidden.emit(self)
+
+    def open_colorpicker(self):
+
+        new_color = QtWidgets.QColorDialog().getColor(initial=self.color,
+                                                      options=QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel)
+
+        if new_color.isValid():
+            self.color = new_color
+            self.map_widget.sig_item_color_changed.emit(self)
+
+    def update_color_btn(self):
+
+        color = self.color
+        color_btn = self.tree_widget.itemWidget(self, 2)
+
+        if color_btn.isEnabled():
+            color_btn.setStyleSheet(f'background-color: rgba{color.getRgb()};')
+        else:
+            color_btn.setStyleSheet('')
+
+
+class MapWidget(QtWidgets.QWidget):
+    sig_path_added = QtCore.Signal(str)
+    sig_item_shown = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_hidden = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_color_changed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_added = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+    sig_item_removed = QtCore.Signal(QtWidgets.QTreeWidgetItem)
+
+    item_count: int = 0
+    selected_items: List[QtWidgets.QTreeWidgetItem] = []
+    map_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
+
+    def __init__(self, parent=None):
+        QtWidgets.QWidget.__init__(self, parent)
+        self.setAcceptDrops(True)
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        # Add drop label
+        self.drop_label = QtWidgets.QLabel('Drop files to load...')
+        self.drop_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.layout().addWidget(self.drop_label)
+
+        # Add tree widget
+        self.tree_widget = QtWidgets.QTreeWidget(self)
+        self.tree_widget.headerItem().setText(0, 'Custom maps')
+        self.tree_widget.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tree_widget.headerItem().setText(1, '')
+        self.tree_widget.header().resizeSection(1, 50)
+        self.tree_widget.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.headerItem().setText(2, '')
+        self.tree_widget.header().resizeSection(2, 25)
+        self.tree_widget.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.tree_widget.header().setStretchLastSection(False)
+        self.layout().addWidget(self.tree_widget)
+
+        self.sig_path_added.connect(self.add_map)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            ext = event.mimeData().urls()[0].fileName().split('.')[-1]
+
+            if ext.lower() in ['tif', 'tiff']:
+                event.accept()
+            else:
+                event.ignore()
+
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+
+        for url in event.mimeData().urls():
+            print(f'Load custom map from {url}')
+            ext = url.fileName().split('.')[-1]
+
+            if ext.lower() in ['tif', 'tiff']:
+                self.add_map(data=url.path().strip('/'))
+            else:
+                print(f'WARNING: unknown file type {ext}')
+
+    def keyPressEvent(self, event, /):
+        if event.key() == QtCore.Qt.Key.Key_Delete:
+            current_item = self.tree_widget.currentItem()
+
+            # Check if item is selected
+            if current_item is None:
+                return
+
+            self.remove_item(current_item)
+
+        QtWidgets.QGroupBox.keyPressEvent(self, event)
+
+    def load_map_data(self, path: Union[str, os.PathLike]):
+
+        ext = path.split('.')[-1]
+
+        if ext.lower() in ['tif', 'tiff']:
+            data = np.swapaxes(np.moveaxis(tifffile.imread(path), 0, 2), 0, 1)[:, :, :, None]
+
+        else:
+            return
+
+        return data
+
+    def add_map(self, data: Union[np.ndarray, pd.DataFrame, str, os.PathLike], name: str = None):
+
+        # Load data from path
+        if isinstance(data, (str, os.PathLike)):
+            if name is None:
+                name = data
+
+            data = self.load_map_data(data)
+
+        print('>', data.shape)
+
+        if data is None:
+            return
+
+        # Set name if none given
+        if name is None:
+            name = f'Map {self.item_count}'
+            self.item_count += 1
+
+        if '/' in name:
+            name_short = name.split('/')[-1]
+        elif '\\' in name:
+            name_short = name.split('\\')[-1]
+        else:
+            name_short = name
+
+        # Check if tree item with same name exists already
+        color = None
+        for i in range(self.tree_widget.topLevelItemCount()):
+            _item = self.tree_widget.topLevelItem(i)
+            if name == _item.name:
+                # Remove current item and keep last color
+                color = _item.color
+                self.remove_item(_item)
+                break
+
+        # Add tree item
+        map_item = MapItem(name=name, shortname=name_short, data=data, color=color)
+        self.tree_widget.addTopLevelItem(map_item)
+
+        # Emit item added signal
+        self.sig_item_added.emit(map_item)
+
+        # Toggle on by default
+        map_item.toggle_item()
+
+    def remove_item(self, map_item: MapItem):
+
+        # Delete item
+        print(f'Delete custom map {map_item.name}')
+
+        # Remove from selection list
+        if map_item in self.selected_items:
+            self.selected_items.remove(map_item)
+            del config.map_items[map_item.name]
+
+        # Remove from tree
+        self.tree_widget.invisibleRootItem().removeChild(map_item)
+
+        # Emit item removed signal
+        self.sig_item_removed.emit(map_item)
+
+
+class RoiWidget(QtWidgets.QWidget):
     sig_path_added = QtCore.Signal(str)
     sig_item_shown = QtCore.Signal(QtWidgets.QTreeWidgetItem)
     sig_item_hidden = QtCore.Signal(QtWidgets.QTreeWidgetItem)
@@ -561,10 +812,8 @@ class RoiWidget(QtWidgets.QGroupBox):
     selected_items: List[QtWidgets.QTreeWidgetItem] = []
 
     def __init__(self, parent=None):
-        QtWidgets.QGroupBox.__init__(self, 'ROIs', parent)
+        QtWidgets.QWidget.__init__(self, parent)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(300)
         self.setLayout(QtWidgets.QVBoxLayout())
 
         # Add drop label
